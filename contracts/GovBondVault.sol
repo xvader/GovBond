@@ -7,7 +7,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 interface IGovBondToken {
     function mint(address to, uint256 amount) external;
-    function burnFrom(address from, uint256 amount) external;
+    function burn(uint256 amount) external;
     function balanceOf(address account) external view returns (uint256);
     function totalSupply() external view returns (uint256);
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
@@ -141,6 +141,7 @@ contract GovBondVault is AccessControl {
         hasPendingRedeem[controller] = false;
         assets = (shares * bondPrice) / 1e18; // bond 18dec → usdc 6dec
         usdc.safeTransfer(receiver, assets);
+        bondToken.burn(shares); // vault holds the shares since requestRedeem transferred them in
     }
 
     // ── Admin fulfillment ─────────────────────────────────────────────────────
@@ -192,5 +193,15 @@ contract GovBondVault is AccessControl {
 
     function setBondPrice(uint256 _price) external onlyRole(DEFAULT_ADMIN_ROLE) {
         bondPrice = _price;
+    }
+
+    function resetDepositRequest(address investor) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        depositRequests[investorDepositRequestId[investor]].claimed = true;
+        hasPendingDeposit[investor] = false;
+    }
+
+    function resetRedeemRequest(address investor) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        redeemRequests[investorRedeemRequestId[investor]].claimed = true;
+        hasPendingRedeem[investor] = false;
     }
 }

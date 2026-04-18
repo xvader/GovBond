@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 
@@ -13,7 +14,7 @@ interface IComplianceModule {
     function canTransfer(address from, address to, uint256 amount) external view returns (bool);
 }
 
-contract GovBondToken is ERC20, AccessControl, Pausable {
+contract GovBondToken is ERC20, ERC20Burnable, AccessControl, Pausable {
     bytes32 public constant AGENT_ROLE = keccak256("AGENT_ROLE");
     bytes32 public constant COMPLIANCE_ROLE = keccak256("COMPLIANCE_ROLE");
 

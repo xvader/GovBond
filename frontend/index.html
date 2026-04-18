@@ -58,6 +58,9 @@ header h1 span{color:#4f8ef7}
 </style>
 </head>
 <body>
+<div id="configBanner" style="display:none;background:#450a0a;color:#f87171;padding:12px 20px;border-radius:8px;margin-bottom:16px;font-size:14px;font-weight:600;width:100%">
+  ⚠️ Contract addresses not configured — contact the issuer.
+</div>
 <div class="container">
   <header>
     <h1>Gov<span>Bond</span> <span class="badge badge-blue">Arbitrum Sepolia</span></h1>
@@ -442,6 +445,13 @@ function switchTab(name, btn) {
 if (window.ethereum) {
   window.ethereum.on("accountsChanged", () => location.reload());
   window.ethereum.on("chainChanged", () => location.reload());
+}
+
+// Startup check
+if (!window.DEPLOYMENTS.GovBondVault) {
+  document.getElementById("configBanner").style.display = "block";
+  document.querySelectorAll(".btn").forEach(b => b.disabled = true);
+  document.getElementById("connectBtn").disabled = true;
 }
 </script>
 </body>
