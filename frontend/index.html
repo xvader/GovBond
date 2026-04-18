@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>GovBond — Palembang Municipal Bond 2025</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter',sans-serif;background:#0f1117;color:#e2e8f0;min-height:100vh;padding:16px}
+a{color:#4f8ef7;text-decoration:none}
+a:hover{text-decoration:underline}
+.badge{display:inline-flex;align-items:center;gap:4px;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600}
+.badge-blue{background:#1e3a5f;color:#4f8ef7}
+.badge-green{background:#14532d;color:#4ade80}
+.badge-red{background:#450a0a;color:#f87171}
+.badge-yellow{background:#422006;color:#fbbf24}
+.container{max-width:1100px;margin:0 auto}
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:12px}
+header h1{font-size:20px;font-weight:700;color:#fff}
+header h1 span{color:#4f8ef7}
+#connectBtn{background:#4f8ef7;color:#fff;border:none;padding:8px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:background .2s}
+#connectBtn:hover{background:#3b7de8}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
+.card{background:#1a1d27;border-radius:12px;padding:20px;border:1px solid #2a2d3a}
+.card h2{font-size:14px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:16px}
+.info-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #2a2d3a;font-size:14px}
+.info-row:last-child{border-bottom:none}
+.info-row .label{color:#94a3b8}
+.info-row .value{font-weight:500;color:#e2e8f0;text-align:right;max-width:60%;word-break:break-all}
+.balance-row{display:flex;align-items:center;gap:8px}
+.eye-btn{background:none;border:none;cursor:pointer;color:#94a3b8;font-size:16px;padding:0 4px}
+.tabs{display:flex;gap:4px;margin-bottom:16px;background:#0f1117;border-radius:8px;padding:4px}
+.tab{flex:1;padding:8px;border:none;background:none;color:#94a3b8;font-size:14px;font-weight:500;cursor:pointer;border-radius:6px;transition:all .2s}
+.tab.active{background:#1a1d27;color:#fff}
+.tab-panel{display:none}
+.tab-panel.active{display:block}
+.form-group{margin-bottom:12px}
+.form-group label{display:block;font-size:13px;color:#94a3b8;margin-bottom:4px}
+.form-group input{width:100%;background:#0f1117;border:1px solid #2a2d3a;border-radius:8px;padding:8px 12px;color:#e2e8f0;font-size:14px;outline:none;transition:border .2s}
+.form-group input:focus{border-color:#4f8ef7}
+.btn{width:100%;padding:10px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:background .2s;margin-top:4px}
+.btn-primary{background:#4f8ef7;color:#fff}
+.btn-primary:hover{background:#3b7de8}
+.btn-secondary{background:#2a2d3a;color:#e2e8f0}
+.btn-secondary:hover{background:#363a4f}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.status{margin-top:10px;padding:10px;border-radius:8px;font-size:13px;display:none}
+.status.show{display:block}
+.status.success{background:#14532d;color:#4ade80}
+.status.error{background:#450a0a;color:#f87171}
+.status.info{background:#1e3a5f;color:#93c5fd}
+.admin-section{margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid #2a2d3a}
+.admin-section:last-child{border-bottom:none}
+.admin-section h3{font-size:13px;font-weight:600;color:#94a3b8;margin-bottom:8px}
+@media(max-width:600px){header{flex-direction:column;align-items:flex-start}.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>Gov<span>Bond</span> <span class="badge badge-blue">Arbitrum Sepolia</span></h1>
+    <button id="connectBtn" onclick="connectWallet()">Connect Wallet</button>
+  </header>
+
+  <div class="grid">
+    <!-- Panel 1: Bond Info -->
+    <div class="card">
+      <h2>Bond Information</h2>
+      <div class="info-row"><span class="label">Name</span><span class="value">Palembang Municipal Bond 2025</span></div>
+      <div class="info-row"><span class="label">Symbol</span><span class="value">PMB25</span></div>
+      <div class="info-row"><span class="label">Issuer</span><span class="value">Palembang City Treasury</span></div>
+      <div class="info-row"><span class="label">Face Value</span><span class="value">Rp 1,000,000 / unit</span></div>
+      <div class="info-row"><span class="label">Coupon Rate</span><span class="value" id="couponRate">7.50% p.a.</span></div>
+      <div class="info-row"><span class="label">Maturity Date</span><span class="value" id="maturityDate">—</span></div>
+      <div class="info-row"><span class="label">Total Supply</span><span class="value" id="totalSupply">—</span></div>
+      <div class="info-row"><span class="label">Contract</span><span class="value"><a id="contractLink" href="#" target="_blank" id="contractAddr">—</a></span></div>
+      <div class="info-row"><span class="label">Network</span><span class="value"><span class="badge badge-blue">Arbitrum Sepolia</span></span></div>
+    </div>
+
+    <!-- Panel 2: Investor Dashboard -->
+    <div class="card">
+      <h2>Investor Dashboard</h2>
+      <div id="notConnected" style="color:#94a3b8;font-size:14px">Connect your wallet to view your dashboard.</div>
+      <div id="dashboardContent" style="display:none">
+        <div class="info-row"><span class="label">Wallet</span><span class="value" id="walletAddr">—</span></div>
+        <div class="info-row"><span class="label">KYC Status</span><span class="value" id="kycStatus">—</span></div>
+        <div class="info-row"><span class="label">USDC Balance</span><span class="value" id="usdcBalance">—</span></div>
+        <div class="info-row">
+          <span class="label">PMB25 Holdings</span>
+          <span class="value">
+            <span class="balance-row">
+              <span id="bondBalance">—</span>
+              <button class="eye-btn" onclick="toggleBalance()" title="Toggle visibility">👁</button>
+            </span>
+          </span>
+        </div>
+        <div class="info-row"><span class="label">Pending Deposit</span><span class="value" id="pendingDeposit">—</span></div>
+        <div class="info-row"><span class="label">Claimable Bonds</span><span class="value" id="claimableBonds">—</span></div>
+        <div class="info-row"><span class="label">Coupons Received</span><span class="value" id="couponsReceived">—</span></div>
+      </div>
+    </div>
+
+    <!-- Panel 3: Actions -->
+    <div class="card">
+      <h2>Actions</h2>
+      <div class="tabs">
+        <button class="tab active" onclick="switchTab('subscribe',this)">Subscribe</button>
+        <button class="tab" onclick="switchTab('redeem',this)">Redeem</button>
+        <button class="tab" id="adminTabBtn" onclick="switchTab('admin',this)" style="display:none">Admin</button>
+      </div>
+
+      <div id="tab-subscribe" class="tab-panel active">
+        <div class="form-group">
+          <label>Amount (USDC)</label>
+          <input type="number" id="depositAmount" placeholder="e.g. 1000" min="1"/>
+        </div>
+        <button class="btn btn-primary" onclick="requestDeposit()">Request Subscription</button>
+        <div id="subscribeStatus" class="status"></div>
+      </div>
+
+      <div id="tab-redeem" class="tab-panel">
+        <div class="form-group">
+          <label>Bond Units to Redeem</label>
+          <input type="number" id="redeemAmount" placeholder="e.g. 100" min="1"/>
+        </div>
+        <button class="btn btn-primary" onclick="requestRedeem()">Request Redemption</button>
+        <div id="redeemStatus" class="status"></div>
+      </div>
+
+      <div id="tab-admin" class="tab-panel">
+        <div class="admin-section">
+          <h3>Register Investor</h3>
+          <div class="form-group"><input type="text" id="regAddress" placeholder="Investor address (0x...)"/></div>
+          <div class="form-group"><input type="text" id="regCountry" placeholder="Country code (e.g. ID)"/></div>
+          <button class="btn btn-secondary" onclick="registerInvestor()">Register Investor</button>
+        </div>
+        <div class="admin-section">
+          <h3>Fulfill Pending Deposits</h3>
+          <div class="form-group"><input type="text" id="fulfillAddresses" placeholder="Comma-separated addresses"/></div>
+          <button class="btn btn-secondary" onclick="fulfillDeposits()">Fulfill Deposits</button>
+        </div>
+        <div class="admin-section">
+          <h3>Distribute Coupon</h3>
+          <div class="form-group"><input type="number" id="couponAmount" placeholder="Total USDC coupon pool"/></div>
+          <div class="form-group"><input type="text" id="couponHolders" placeholder="Comma-separated holder addresses"/></div>
+          <button class="btn btn-secondary" onclick="distributeCoupon()">Distribute Coupon</button>
+        </div>
+        <div class="admin-section">
+          <h3>Mint Test USDC</h3>
+          <button class="btn btn-secondary" onclick="mintTestUSDC()">Mint 10,000 USDC to My Wallet</button>
+        </div>
+        <div id="adminStatus" class="status"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Deployments (update after deploy) ────────────────────────────────────────
+window.DEPLOYMENTS = {
+  MockUSDC: "",
+  IdentityRegistry: "",
+  ComplianceModule: "",
+  GovBondToken: "",
+  GovBondVault: "",
+  deployer: ""
+};
+
+// ── ABIs ──────────────────────────────────────────────────────────────────────
+const ERC20_ABI = [
+  "function balanceOf(address) view returns (uint256)",
+  "function approve(address spender, uint256 amount) returns (bool)",
+  "function allowance(address owner, address spender) view returns (uint256)",
+  "function decimals() view returns (uint8)",
+  "function totalSupply() view returns (uint256)"
+];
+
+const MOCK_USDC_ABI = [...ERC20_ABI,
+  "function mint(address to, uint256 amount)"
+];
+
+const BOND_ABI = [...ERC20_ABI,
+  "function maturityDate() view returns (uint256)",
+  "function couponRate() view returns (uint256)",
+  "function frozen(address) view returns (bool)"
+];
+
+const REGISTRY_ABI = [
+  "function isVerified(address) view returns (bool)",
+  "function registerInvestor(address investor, string calldata country)",
+  "function batchRegister(address[] calldata investors, string[] calldata countries)"
+];
+
+const VAULT_ABI = [
+  "function requestDeposit(uint256 assets, address controller, address owner) returns (uint256)",
+  "function deposit(uint256 assets, address receiver, address controller) returns (uint256)",
+  "function requestRedeem(uint256 shares, address controller, address owner) returns (uint256)",
+  "function redeem(uint256 shares, address receiver, address controller) returns (uint256)",
+  "function fulfillDeposits(address[] calldata investors)",
+  "function fulfillRedemptions(address[] calldata investors)",
+  "function distributeCoupon(uint256 totalCouponPool, address[] calldata holders)",
+  "function couponsReceived(address) view returns (uint256)",
+  "function hasPendingDeposit(address) view returns (bool)",
+  "function hasPendingRedeem(address) view returns (bool)",
+  "function investorDepositRequestId(address) view returns (uint256)",
+  "function depositRequests(uint256) view returns (address investor, uint256 assets, uint256 timestamp, bool claimable, bool claimed)",
+  "function pendingDepositRequest(uint256 requestId, address controller) view returns (uint256)",
+  "function claimableDepositRequest(uint256 requestId, address controller) view returns (uint256)"
+];
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let provider, signer, userAddress;
+let bondContract, usdcContract, registryContract, vaultContract;
+let balanceHidden = true;
+let cachedBondBalance = "0";
+
+const ARBISCAN = "https://sepolia.arbiscan.io";
+const CHAIN_ID = 421614;
+
+// ── Wallet ────────────────────────────────────────────────────────────────────
+async function connectWallet() {
+  if (!window.ethereum) return alert("MetaMask not found. Please install it.");
+  try {
+    await window.ethereum.request({ method: "eth_requestAccounts" });
+    provider = new ethers.BrowserProvider(window.ethereum);
+    const network = await provider.getNetwork();
+    if (Number(network.chainId) !== CHAIN_ID) {
+      try {
+        await window.ethereum.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: "0x" + CHAIN_ID.toString(16) }]
+        });
+      } catch (e) {
+        await window.ethereum.request({
+          method: "wallet_addEthereumChain",
+          params: [{
+            chainId: "0x" + CHAIN_ID.toString(16),
+            chainName: "Arbitrum Sepolia",
+            rpcUrls: ["https://sepolia-rollup.arbitrum.io/rpc"],
+            nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
+            blockExplorerUrls: ["https://sepolia.arbiscan.io"]
+          }]
+        });
+      }
+      provider = new ethers.BrowserProvider(window.ethereum);
+    }
+    signer = await provider.getSigner();
+    userAddress = await signer.getAddress();
+    initContracts();
+    document.getElementById("connectBtn").textContent = userAddress.slice(0,6) + "..." + userAddress.slice(-4);
+    document.getElementById("notConnected").style.display = "none";
+    document.getElementById("dashboardContent").style.display = "block";
+    if (userAddress.toLowerCase() === window.DEPLOYMENTS.deployer.toLowerCase()) {
+      document.getElementById("adminTabBtn").style.display = "block";
+    }
+    await refreshDashboard();
+    await loadBondInfo();
+  } catch (e) {
+    console.error(e);
+    alert("Connection failed: " + (e.message || e));
+  }
+}
+
+function initContracts() {
+  const d = window.DEPLOYMENTS;
+  if (d.GovBondToken) bondContract = new ethers.Contract(d.GovBondToken, BOND_ABI, signer);
+  if (d.MockUSDC) usdcContract = new ethers.Contract(d.MockUSDC, MOCK_USDC_ABI, signer);
+  if (d.IdentityRegistry) registryContract = new ethers.Contract(d.IdentityRegistry, REGISTRY_ABI, signer);
+  if (d.GovBondVault) vaultContract = new ethers.Contract(d.GovBondVault, VAULT_ABI, signer);
+}
+
+// ── Bond Info ─────────────────────────────────────────────────────────────────
+async function loadBondInfo() {
+  if (!bondContract) return;
+  try {
+    const [totalSupply, maturity, coupon] = await Promise.all([
+      bondContract.totalSupply(),
+      bondContract.maturityDate(),
+      bondContract.couponRate()
+    ]);
+    document.getElementById("totalSupply").textContent = fmt18(totalSupply) + " PMB25";
+    document.getElementById("maturityDate").textContent = new Date(Number(maturity) * 1000).toLocaleDateString("en-GB", {year:"numeric",month:"short",day:"numeric"});
+    document.getElementById("couponRate").textContent = (Number(coupon) / 100).toFixed(2) + "% p.a.";
+    const addr = window.DEPLOYMENTS.GovBondToken;
+    const el = document.getElementById("contractLink");
+    el.textContent = addr.slice(0,8) + "..." + addr.slice(-6);
+    el.href = ARBISCAN + "/address/" + addr;
+  } catch(e) { console.error("loadBondInfo", e); }
+}
+
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+async function refreshDashboard() {
+  if (!userAddress) return;
+  try {
+    const [usdcBal, bondBal, verified, coupons, hasPending] = await Promise.all([
+      usdcContract ? usdcContract.balanceOf(userAddress) : Promise.resolve(0n),
+      bondContract ? bondContract.balanceOf(userAddress) : Promise.resolve(0n),
+      registryContract ? registryContract.isVerified(userAddress) : Promise.resolve(false),
+      vaultContract ? vaultContract.couponsReceived(userAddress) : Promise.resolve(0n),
+      vaultContract ? vaultContract.hasPendingDeposit(userAddress) : Promise.resolve(false)
+    ]);
+
+    document.getElementById("walletAddr").textContent = userAddress.slice(0,8) + "..." + userAddress.slice(-6);
+    document.getElementById("kycStatus").innerHTML = verified
+      ? '<span class="badge badge-green">Verified ✓</span>'
+      : '<span class="badge badge-red">Not Verified ✗</span>';
+    document.getElementById("usdcBalance").textContent = fmt6(usdcBal) + " USDC";
+    cachedBondBalance = fmt18(bondBal) + " PMB25";
+    document.getElementById("bondBalance").textContent = balanceHidden ? "••••••" : cachedBondBalance;
+    document.getElementById("couponsReceived").textContent = fmt6(coupons) + " USDC";
+
+    if (hasPending && vaultContract) {
+      const reqId = await vaultContract.investorDepositRequestId(userAddress);
+      const [pending, claimable] = await Promise.all([
+        vaultContract.pendingDepositRequest(reqId, userAddress),
+        vaultContract.claimableDepositRequest(reqId, userAddress)
+      ]);
+      document.getElementById("pendingDeposit").textContent = pending > 0n ? fmt6(pending) + " USDC" : "—";
+      document.getElementById("claimableBonds").textContent = claimable > 0n ? fmt6(claimable) + " USDC (ready to claim)" : "—";
+    } else {
+      document.getElementById("pendingDeposit").textContent = "—";
+      document.getElementById("claimableBonds").textContent = "—";
+    }
+  } catch(e) { console.error("refreshDashboard", e); }
+}
+
+function toggleBalance() {
+  balanceHidden = !balanceHidden;
+  document.getElementById("bondBalance").textContent = balanceHidden ? "••••••" : cachedBondBalance;
+}
+
+// ── Subscribe ─────────────────────────────────────────────────────────────────
+async function requestDeposit() {
+  const raw = document.getElementById("depositAmount").value;
+  if (!raw || Number(raw) <= 0) return showStatus("subscribeStatus", "Enter a valid amount.", "error");
+  const amount = ethers.parseUnits(raw, 6);
+  try {
+    showStatus("subscribeStatus", "Approving USDC...", "info");
+    const approveTx = await usdcContract.approve(window.DEPLOYMENTS.GovBondVault, amount);
+    await approveTx.wait();
+    showStatus("subscribeStatus", "Submitting deposit request...", "info");
+    const tx = await vaultContract.requestDeposit(amount, userAddress, userAddress);
+    const receipt = await tx.wait();
+    showStatus("subscribeStatus", `Deposit requested! <a href="${ARBISCAN}/tx/${receipt.hash}" target="_blank">View TX ↗</a>`, "success");
+    await refreshDashboard();
+  } catch(e) {
+    showStatus("subscribeStatus", "Error: " + (e.reason || e.message), "error");
+  }
+}
+
+// ── Redeem ────────────────────────────────────────────────────────────────────
+async function requestRedeem() {
+  const raw = document.getElementById("redeemAmount").value;
+  if (!raw || Number(raw) <= 0) return showStatus("redeemStatus", "Enter a valid amount.", "error");
+  const shares = ethers.parseEther(raw);
+  try {
+    showStatus("redeemStatus", "Approving bond tokens...", "info");
+    const bondWithApprove = new ethers.Contract(window.DEPLOYMENTS.GovBondToken,
+      [...BOND_ABI, "function approve(address spender, uint256 amount) returns (bool)"], signer);
+    const approveTx = await bondWithApprove.approve(window.DEPLOYMENTS.GovBondVault, shares);
+    await approveTx.wait();
+    showStatus("redeemStatus", "Submitting redemption request...", "info");
+    const tx = await vaultContract.requestRedeem(shares, userAddress, userAddress);
+    const receipt = await tx.wait();
+    showStatus("redeemStatus", `Redemption requested! <a href="${ARBISCAN}/tx/${receipt.hash}" target="_blank">View TX ↗</a>`, "success");
+    await refreshDashboard();
+  } catch(e) {
+    showStatus("redeemStatus", "Error: " + (e.reason || e.message), "error");
+  }
+}
+
+// ── Admin ─────────────────────────────────────────────────────────────────────
+async function registerInvestor() {
+  const addr = document.getElementById("regAddress").value.trim();
+  const country = document.getElementById("regCountry").value.trim().toUpperCase();
+  if (!ethers.isAddress(addr) || !country) return showStatus("adminStatus", "Invalid address or country.", "error");
+  try {
+    const tx = await registryContract.registerInvestor(addr, country);
+    const receipt = await tx.wait();
+    showStatus("adminStatus", `Investor registered! <a href="${ARBISCAN}/tx/${receipt.hash}" target="_blank">View TX ↗</a>`, "success");
+  } catch(e) { showStatus("adminStatus", "Error: " + (e.reason || e.message), "error"); }
+}
+
+async function fulfillDeposits() {
+  const raw = document.getElementById("fulfillAddresses").value;
+  const addrs = raw.split(",").map(a => a.trim()).filter(a => ethers.isAddress(a));
+  if (!addrs.length) return showStatus("adminStatus", "Enter valid addresses.", "error");
+  try {
+    const tx = await vaultContract.fulfillDeposits(addrs);
+    const receipt = await tx.wait();
+    showStatus("adminStatus", `Deposits fulfilled! <a href="${ARBISCAN}/tx/${receipt.hash}" target="_blank">View TX ↗</a>`, "success");
+    await refreshDashboard();
+  } catch(e) { showStatus("adminStatus", "Error: " + (e.reason || e.message), "error"); }
+}
+
+async function distributeCoupon() {
+  const raw = document.getElementById("couponAmount").value;
+  const holdersRaw = document.getElementById("couponHolders").value;
+  const holders = holdersRaw.split(",").map(a => a.trim()).filter(a => ethers.isAddress(a));
+  if (!raw || Number(raw) <= 0 || !holders.length) return showStatus("adminStatus", "Enter coupon amount and holders.", "error");
+  const amount = ethers.parseUnits(raw, 6);
+  try {
+    showStatus("adminStatus", "Approving USDC for coupon...", "info");
+    const approveTx = await usdcContract.approve(window.DEPLOYMENTS.GovBondVault, amount);
+    await approveTx.wait();
+    const tx = await vaultContract.distributeCoupon(amount, holders);
+    const receipt = await tx.wait();
+    showStatus("adminStatus", `Coupon distributed! <a href="${ARBISCAN}/tx/${receipt.hash}" target="_blank">View TX ↗</a>`, "success");
+  } catch(e) { showStatus("adminStatus", "Error: " + (e.reason || e.message), "error"); }
+}
+
+async function mintTestUSDC() {
+  if (!userAddress) return showStatus("adminStatus", "Connect wallet first.", "error");
+  try {
+    const tx = await usdcContract.mint(userAddress, ethers.parseUnits("10000", 6));
+    const receipt = await tx.wait();
+    showStatus("adminStatus", `Minted 10,000 USDC! <a href="${ARBISCAN}/tx/${receipt.hash}" target="_blank">View TX ↗</a>`, "success");
+    await refreshDashboard();
+  } catch(e) { showStatus("adminStatus", "Error: " + (e.reason || e.message), "error"); }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function fmt18(val) { return parseFloat(ethers.formatEther(val)).toLocaleString("en-US", {maximumFractionDigits:4}); }
+function fmt6(val) { return parseFloat(ethers.formatUnits(val, 6)).toLocaleString("en-US", {maximumFractionDigits:2}); }
+
+function showStatus(id, msg, type) {
+  const el = document.getElementById(id);
+  el.innerHTML = msg;
+  el.className = "status show " + type;
+}
+
+function switchTab(name, btn) {
+  document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+  document.getElementById("tab-" + name).classList.add("active");
+  btn.classList.add("active");
+}
+
+// Auto-refresh on account/chain change
+if (window.ethereum) {
+  window.ethereum.on("accountsChanged", () => location.reload());
+  window.ethereum.on("chainChanged", () => location.reload());
+}
+</script>
+</body>
+</html>
