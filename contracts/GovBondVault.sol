@@ -14,6 +14,7 @@ interface IGovBondToken {
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
     function transfer(address to, uint256 amount) external returns (bool);
     function couponRate() external view returns (uint256);
+    function maturityDate() external view returns (uint256);
 }
 
 contract GovBondVault is AccessControl {
@@ -121,6 +122,7 @@ contract GovBondVault is AccessControl {
     // ── ERC-7540 Redeem ───────────────────────────────────────────────────────
 
     function requestRedeem(uint256 shares, address controller, address owner) external returns (uint256 requestId) {
+        require(block.timestamp >= bondToken.maturityDate(), "Bond not yet matured");
         require(shares > 0, "Zero shares");
         require(!hasPendingRedeem[controller], "Pending redeem exists");
         bondToken.transferFrom(owner, address(this), shares);

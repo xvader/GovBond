@@ -161,15 +161,23 @@ header h1 span{color:#4f8ef7}
 </div>
 
 <script>
-// ── Deployments (update after deploy) ────────────────────────────────────────
-window.DEPLOYMENTS = {
-  MockUSDC: "",
-  IdentityRegistry: "",
-  ComplianceModule: "",
-  GovBondToken: "",
-  GovBondVault: "",
-  deployer: ""
-};
+// ── Deployments — loaded from deployments.json at runtime ────────────────────
+window.DEPLOYMENTS = {};
+
+async function loadDeployments() {
+  try {
+    const resp = await fetch('./deployments.json');
+    if (!resp.ok) throw new Error("Not found");
+    window.DEPLOYMENTS = await resp.json();
+  } catch {
+    window.DEPLOYMENTS = {};
+  }
+  if (!window.DEPLOYMENTS.GovBondVault) {
+    document.getElementById("configBanner").style.display = "block";
+    document.querySelectorAll(".btn").forEach(b => b.disabled = true);
+    document.getElementById("connectBtn").disabled = true;
+  }
+}
 
 // ── ABIs ──────────────────────────────────────────────────────────────────────
 const ERC20_ABI = [
@@ -447,12 +455,7 @@ if (window.ethereum) {
   window.ethereum.on("chainChanged", () => location.reload());
 }
 
-// Startup check
-if (!window.DEPLOYMENTS.GovBondVault) {
-  document.getElementById("configBanner").style.display = "block";
-  document.querySelectorAll(".btn").forEach(b => b.disabled = true);
-  document.getElementById("connectBtn").disabled = true;
-}
+loadDeployments();
 </script>
 </body>
 </html>

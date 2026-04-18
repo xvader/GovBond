@@ -80,11 +80,10 @@ async function main() {
 
   const dir = path.join(__dirname, "../deployments");
   if (!fs.existsSync(dir)) fs.mkdirSync(dir);
-  fs.writeFileSync(
-    path.join(dir, "arbitrum-sepolia.json"),
-    JSON.stringify(deployments, null, 2)
-  );
-  console.log("Saved to deployments/arbitrum-sepolia.json");
+  const json = JSON.stringify(deployments, null, 2);
+  fs.writeFileSync(path.join(dir, "arbitrum-sepolia.json"), json);
+  fs.writeFileSync(path.join(__dirname, "../frontend/deployments.json"), json);
+  console.log("Saved to deployments/arbitrum-sepolia.json and frontend/deployments.json");
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });
