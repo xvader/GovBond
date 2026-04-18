@@ -57,13 +57,17 @@ contract GovBondVault is AccessControl {
 
     uint256 public bondPrice;
 
+    bool public emergencyWithdrawUSDC;
+
     EnumerableSet.AddressSet private _bondholders;
+
 
     event DepositRequest_(uint256 indexed requestId, address indexed controller, address indexed owner, uint256 assets);
     event RedeemRequest_(uint256 indexed requestId, address indexed controller, address indexed owner, uint256 shares);
     event DepositClaimable(uint256 indexed requestId, address indexed controller, uint256 assets);
     event RedeemClaimable(uint256 indexed requestId, address indexed controller, uint256 shares);
     event CouponPaid(address indexed holder, uint256 amount);
+    event BondPriceUpdated(uint256 oldPrice, uint256 newPrice);
 
     constructor(address _bondToken, address _usdc, uint256 _bondPrice) {
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
@@ -213,7 +217,17 @@ contract GovBondVault is AccessControl {
     }
 
     function setBondPrice(uint256 _price) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        emit BondPriceUpdated(bondPrice, _price);
         bondPrice = _price;
+    }
+
+    function withdrawDust(address token, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(token != address(usdc) || emergencyWithdrawUSDC, "Use emergencyWithdrawUSDC flag");
+        IERC20(token).safeTransfer(msg.sender, amount);
+    }
+
+    function setEmergencyWithdrawUSDC(bool enabled) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        emergencyWithdrawUSDC = enabled;
     }
 
     function resetDepositRequest(address investor) external onlyRole(DEFAULT_ADMIN_ROLE) {
