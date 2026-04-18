@@ -125,8 +125,18 @@ describe("GovBond", function () {
   // 6. Coupon distribution
   describe("Coupon distribution", () => {
     it("distributes pro-rata coupons", async () => {
-      await bond.mint(investor1.address, ethers.parseEther("300"));
-      await bond.mint(investor2.address, ethers.parseEther("700"));
+      // Deposit via vault so updateHolder fires and _bondholders is populated
+      const dep1 = 300n * 1_000_000n;
+      const dep2 = 700n * 1_000_000n;
+
+      await usdc.connect(investor1).approve(await vault.getAddress(), dep1);
+      await vault.connect(investor1).requestDeposit(dep1, investor1.address, investor1.address);
+      await usdc.connect(investor2).approve(await vault.getAddress(), dep2);
+      await vault.connect(investor2).requestDeposit(dep2, investor2.address, investor2.address);
+
+      await vault.fulfillDeposits([investor1.address, investor2.address]);
+      await vault.connect(investor1).deposit(dep1, investor1.address, investor1.address);
+      await vault.connect(investor2).deposit(dep2, investor2.address, investor2.address);
 
       const couponPool = 1000n * 1_000_000n; // 1000 USDC
       await usdc.connect(owner).approve(await vault.getAddress(), couponPool);
@@ -134,7 +144,7 @@ describe("GovBond", function () {
       const i1Before = await usdc.balanceOf(investor1.address);
       const i2Before = await usdc.balanceOf(investor2.address);
 
-      await vault.distributeCoupon(couponPool, [investor1.address, investor2.address]);
+      await vault.distributeCoupon(couponPool);
 
       expect(await usdc.balanceOf(investor1.address)).to.equal(i1Before + 300n * 1_000_000n);
       expect(await usdc.balanceOf(investor2.address)).to.equal(i2Before + 700n * 1_000_000n);

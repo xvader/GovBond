@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 interface IGovBondToken {
     function mint(address to, uint256 amount) external;
@@ -17,6 +18,7 @@ interface IGovBondToken {
 
 contract GovBondVault is AccessControl {
     using SafeERC20 for IERC20;
+    using EnumerableSet for EnumerableSet.AddressSet;
 
     bytes32 public constant AGENT_ROLE = keccak256("AGENT_ROLE");
 
@@ -52,14 +54,15 @@ contract GovBondVault is AccessControl {
 
     mapping(address => uint256) public couponsReceived;
 
-    // 1 USDC (6 decimals) = 1 bond token (18 decimals), price ratio
-    uint256 public bondPrice; // in USDC (6 decimals), e.g. 1e6 = 1 USDC per bond
+    uint256 public bondPrice;
+
+    EnumerableSet.AddressSet private _bondholders;
 
     event DepositRequest_(uint256 indexed requestId, address indexed controller, address indexed owner, uint256 assets);
     event RedeemRequest_(uint256 indexed requestId, address indexed controller, address indexed owner, uint256 shares);
     event DepositClaimable(uint256 indexed requestId, address indexed controller, uint256 assets);
     event RedeemClaimable(uint256 indexed requestId, address indexed controller, uint256 shares);
-    event CouponDistributed(uint256 totalAmount, uint256 timestamp);
+    event CouponPaid(address indexed holder, uint256 amount);
 
     constructor(address _bondToken, address _usdc, uint256 _bondPrice) {
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
@@ -67,6 +70,14 @@ contract GovBondVault is AccessControl {
         bondToken = IGovBondToken(_bondToken);
         usdc = IERC20(_usdc);
         bondPrice = _bondPrice;
+    }
+
+    function updateHolder(address addr) internal {
+        if (bondToken.balanceOf(addr) > 0) {
+            _bondholders.add(addr);
+        } else {
+            _bondholders.remove(addr);
+        }
     }
 
     // ── ERC-7540 Deposit ──────────────────────────────────────────────────────
@@ -102,8 +113,9 @@ contract GovBondVault is AccessControl {
         require(r.assets == assets, "Amount mismatch");
         r.claimed = true;
         hasPendingDeposit[controller] = false;
-        shares = (assets * 1e18) / bondPrice; // usdc 6dec: assets/bondPrice gives bond units, scaled to 18dec
+        shares = (assets * 1e18) / bondPrice;
         bondToken.mint(receiver, shares);
+        updateHolder(receiver);
     }
 
     // ── ERC-7540 Redeem ───────────────────────────────────────────────────────
@@ -139,9 +151,10 @@ contract GovBondVault is AccessControl {
         require(r.shares == shares, "Amount mismatch");
         r.claimed = true;
         hasPendingRedeem[controller] = false;
-        assets = (shares * bondPrice) / 1e18; // bond 18dec → usdc 6dec
+        assets = (shares * bondPrice) / 1e18;
         usdc.safeTransfer(receiver, assets);
-        bondToken.burn(shares); // vault holds the shares since requestRedeem transferred them in
+        bondToken.burn(shares);
+        updateHolder(controller);
     }
 
     // ── Admin fulfillment ─────────────────────────────────────────────────────
@@ -174,21 +187,27 @@ contract GovBondVault is AccessControl {
 
     // ── Coupon distribution ───────────────────────────────────────────────────
 
-    function distributeCoupon(uint256 totalCouponPool, address[] calldata holders) external onlyRole(AGENT_ROLE) {
+    function distributeCoupon(uint256 totalCouponPool) external onlyRole(AGENT_ROLE) {
         require(totalCouponPool > 0, "Zero coupon");
         usdc.safeTransferFrom(msg.sender, address(this), totalCouponPool);
         uint256 totalSupply = bondToken.totalSupply();
         require(totalSupply > 0, "No supply");
-        for (uint256 i = 0; i < holders.length; i++) {
-            uint256 bal = bondToken.balanceOf(holders[i]);
+        uint256 len = _bondholders.length();
+        for (uint256 i = 0; i < len; i++) {
+            address holder = _bondholders.at(i);
+            uint256 bal = bondToken.balanceOf(holder);
             if (bal == 0) continue;
             uint256 coupon = (totalCouponPool * bal) / totalSupply;
             if (coupon > 0) {
-                couponsReceived[holders[i]] += coupon;
-                usdc.safeTransfer(holders[i], coupon);
+                couponsReceived[holder] += coupon;
+                usdc.safeTransfer(holder, coupon);
+                emit CouponPaid(holder, coupon);
             }
         }
-        emit CouponDistributed(totalCouponPool, block.timestamp);
+    }
+
+    function getHolders() external view returns (address[] memory) {
+        return _bondholders.values();
     }
 
     function setBondPrice(uint256 _price) external onlyRole(DEFAULT_ADMIN_ROLE) {
