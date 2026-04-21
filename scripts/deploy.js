@@ -63,9 +63,10 @@ async function main() {
   await idrp.grantRole(MINTER_ROLE, await vault.getAddress());
   console.log("Roles granted");
 
-  // 7. Register deployer as verified investor
+  // 7. Register deployer + vault as verified (vault needs KYC to receive bonds in requestRedeem)
   await registry.registerInvestor(deployer.address, "ID");
-  console.log("Deployer registered as investor");
+  await registry.registerInvestor(await vault.getAddress(), "ID");
+  console.log("Deployer and vault registered in IdentityRegistry");
 
   // 8. Mint 10,000,000,000 IDRP (Rp 100,000,000.00) to deployer
   await idrp.mint(deployer.address, 10_000_000_000n);

@@ -1,30 +1,29 @@
-# GovBond — Confidential Municipal Bond Tokenization
+# GovBond — Municipal Bond Tokenization Protocol
 
-A fully on-chain municipal bond tokenization protocol built on **Arbitrum Sepolia**, targeting the **Confidential DeFi & RWA** hackathon track. GovBond tokenizes the *Palembang Municipal Bond 2025* (PMB25), enabling compliant subscription, coupon distribution, and redemption through a set of interoperable smart contracts.
+> Privacy-preserving municipal bond issuance and settlement on Arbitrum Sepolia.
+> Built for Indonesian regional governments (Pemerintah Daerah).
 
----
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Solidity](https://img.shields.io/badge/Solidity-0.8.24-blue.svg)](https://soliditylang.org)
+[![Network](https://img.shields.io/badge/Network-Arbitrum%20Sepolia-orange.svg)](https://sepolia.arbiscan.io)
+[![Hardhat](https://img.shields.io/badge/Built%20with-Hardhat-yellow.svg)](https://hardhat.org)
 
-## Standards Implemented
+## Overview
 
-| Standard | Role |
-|---|---|
-| **ERC-3643 (T-REX)** | Permissioned security token with KYC, freeze, forced transfer |
-| **ERC-7540** | Asynchronous tokenized vault — subscription and redemption requests |
-| **ERC-20 / ERC-20Burnable** | Base token mechanics |
-| **OpenZeppelin AccessControl** | Role-based admin, agent, and compliance roles |
+GovBond tokenizes Indonesian regional government bonds (*obligasi daerah*) on Arbitrum Sepolia, enabling compliant on-chain subscription, coupon distribution, and redemption. The protocol implements ERC-3643 (T-REX) for KYC-gated security tokens and ERC-7540 for asynchronous vault mechanics, giving treasury teams full control over investor eligibility and bond lifecycle.
 
----
+The system is designed for the Palembang Municipal Bond 2025 (PMB25) as a reference deployment, but the `BondFactory` contract allows any authorized issuer to deploy new bond series without redeploying the core infrastructure.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                      Investor                           │
-│  requestDeposit() ──► GovBondVault ──► fulfillDeposits()│
-│  deposit()        ◄──             ◄── (admin)           │
-│  requestRedeem()  ──►             ──► fulfillRedemptions│
-│  redeem()         ◄──             ◄── (admin)           │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│                       Investor                           │
+│  requestDeposit() ──► GovBondVault ──► fulfillDeposits() │
+│  deposit()        ◄──             ◄── (admin)            │
+│  requestRedeem()  ──►             ──► fulfillRedemptions │
+│  redeem()         ◄──             ◄── (admin)            │
+└──────────────────────────────────────────────────────────┘
          │ mint/burn                    │ canTransfer
          ▼                              ▼
   GovBondToken (PMB25)          ComplianceModule
@@ -33,262 +32,167 @@ A fully on-chain municipal bond tokenization protocol built on **Arbitrum Sepoli
          ▼                            ▼
   IdentityRegistry (KYC)       IdentityRegistry (KYC)
 
-  MockUSDC — settlement token (testnet faucet)
-```
+  IDRPToken — settlement token (2 decimals, MINTER_ROLE gated)
 
----
+  BondFactory — deploys GovBondToken + GovBondVault pairs
+```
 
 ## Contracts
 
-### `GovBondToken.sol` — ERC-3643 Bond Token
+| Contract | Description | Audited |
+|---|---|---|
+| `IDRPToken.sol` | Indonesian Rupiah stablecoin, 2 decimals, MINTER_ROLE gated, testnet faucet | ✓ |
+| `IdentityRegistry.sol` | On-chain KYC whitelist with country codes | ✓ |
+| `ComplianceModule.sol` | Transfer rule engine: KYC, freeze, country blocklist, max holding cap | ✓ |
+| `GovBondToken.sol` | ERC-3643 bond token, 0 decimals, maturity enforcement, forced transfer | ✓ |
+| `GovBondVault.sol` | ERC-7540 async vault: subscription, coupon distribution, redemption | ✓ |
+| `BondFactory.sol` | Multi-bond deployer, ISSUER_ROLE gated | ✓ |
 
-The core security token representing one unit of the Palembang Municipal Bond 2025.
+## Token Standards
 
-| Property | Value |
+- **ERC-3643 (T-REX)** — Permissioned security token. Every transfer checks `ComplianceModule.canTransfer()`. Agents can freeze wallets and execute forced transfers for regulatory compliance.
+- **ERC-7540** — Asynchronous tokenized vault. Investors request deposits/redemptions; admins fulfill them in batches. Prevents front-running and enables off-chain KYC verification before minting.
+- **Privacy model** — All investor data (KYC status, country, holdings) is on-chain but pseudonymous. The `IdentityRegistry` maps wallet addresses to ISO-2 country codes; no PII is stored on-chain.
+
+## Bond Parameters
+
+| Parameter | Value |
 |---|---|
 | Name | Palembang Municipal Bond 2025 |
 | Symbol | PMB25 |
-| Decimals | 18 |
-| Face Value | Rp 1,000,000 per unit |
+| Decimals | 0 (whole units only) |
+| Face Value | Rp 1,000,000 per unit (`100_000_000` IDRP base units) |
 | Coupon Rate | 750 bps (7.5% p.a.) |
-| Maturity | Set at deployment (1 year) |
+| Maturity | 1 year from deployment |
+| Max Supply | 100,000 units |
+| Settlement | IDRP (2 decimals) |
 
-**Key mechanics:**
-- Every `transfer` / `transferFrom` checks `ComplianceModule.canTransfer()` — both parties must be KYC-verified and unfrozen
-- `mint(address, uint256)` — only `AGENT_ROLE`, recipient must be verified
-- `freeze(address, bool)` — agent can freeze/unfreeze wallets; emits `TokensFrozen`
-- `forcedTransfer(from, to, amount)` — agent override, bypasses compliance
-- `pause()` / `unpause()` — admin halts all transfers
-- Extends `ERC20Burnable` — vault burns shares on redemption
-
-**Roles:**
-
-| Role | Capabilities |
-|---|---|
-| `DEFAULT_ADMIN_ROLE` | Pause, set registry/compliance, grant roles |
-| `AGENT_ROLE` | Mint, freeze, forced transfer |
-| `COMPLIANCE_ROLE` | Update compliance rules (max holding) |
-
----
-
-### `IdentityRegistry.sol` — KYC Whitelist
-
-Maintains the on-chain investor whitelist.
-
-```solidity
-mapping(address => bool)    public isVerified;
-mapping(address => string)  public investorCountry;  // ISO-2
-mapping(address => uint256) public verifiedAt;
-```
-
-- `registerInvestor(address, string)` — agent registers a single investor
-- `removeInvestor(address)` — agent removes an investor
-- `batchRegister(address[], string[])` — bulk registration
-
----
-
-### `ComplianceModule.sol` — Transfer Rule Engine
-
-Called by `GovBondToken` before every transfer. Returns `false` (blocking the transfer) if any rule fails:
-
-1. Both `from` and `to` must be verified in `IdentityRegistry` (minting from `address(0)` only checks recipient)
-2. Neither party can be frozen
-3. Optional: `maxHoldingBps` — cap per investor as a % of total supply (e.g. `1000` = 10%)
-
----
-
-### `GovBondVault.sol` — ERC-7540 Async Subscription Vault
-
-Handles the full bond lifecycle: subscription, fulfillment, coupon distribution, and redemption.
-
-**Deposit flow (subscription):**
-```
-1. Investor: approve USDC → vault
-2. Investor: requestDeposit(assets, controller, owner)  → emits DepositRequest_
-3. Admin:    fulfillDeposits([investor])                → emits DepositClaimable
-4. Investor: deposit(assets, receiver, controller)      → mints PMB25 to receiver
-```
-
-**Redemption flow:**
-```
-1. Investor: approve PMB25 → vault
-2. Investor: requestRedeem(shares, controller, owner)   → emits RedeemRequest_
-             ⚠ Reverts if block.timestamp < maturityDate
-3. Admin:    fulfillRedemptions([investor])             → emits RedeemClaimable
-4. Investor: redeem(shares, receiver, controller)       → transfers USDC, burns PMB25
-```
-
-**Coupon distribution:**
-```
-Admin: approve USDC → vault
-Admin: distributeCoupon(totalCouponPool)
-       → iterates on-chain EnumerableSet of bondholders
-       → pays pro-rata: coupon = (pool × holderBalance) / totalSupply
-       → emits CouponPaid(holder, amount) per payout
-```
-
-**Bond price:** `bondPrice` (in USDC 6-decimal units). Default `1e6` = 1 USDC per bond unit.
-Conversion: `shares = (usdcAmount × 1e18) / bondPrice`
-
-**Admin utilities:**
-
-| Function | Description |
-|---|---|
-| `fulfillDeposits(address[])` | Approve pending subscriptions |
-| `fulfillRedemptions(address[])` | Approve pending redemptions |
-| `setBondPrice(uint256)` | Update bond price; emits `BondPriceUpdated` |
-| `withdrawDust(token, amount)` | Recover stuck tokens (non-USDC by default) |
-| `setEmergencyWithdrawUSDC(bool)` | Two-step gate to allow USDC recovery |
-| `resetDepositRequest(address)` | Unblock a stuck deposit request |
-| `resetRedeemRequest(address)` | Unblock a stuck redemption request |
-| `getHolders()` | Returns current bondholder set |
-
----
-
-### `MockUSDC.sol` — Testnet Settlement Token
-
-Standard ERC-20 with 6 decimals and a public `mint()` faucet for testnet use.
-
----
-
-## Project Structure
-
-```
-govbond/
-├── contracts/
-│   ├── GovBondToken.sol       # ERC-3643 bond token
-│   ├── IdentityRegistry.sol   # KYC whitelist
-│   ├── ComplianceModule.sol   # Transfer rule engine
-│   ├── GovBondVault.sol       # ERC-7540 async vault
-│   └── MockUSDC.sol           # Testnet USDC faucet
-├── scripts/
-│   └── deploy.js              # Deployment script
-├── test/
-│   └── GovBond.test.js        # Hardhat + Chai test suite
-├── frontend/
-│   ├── index.html             # Single-file dApp
-│   └── deployments.json       # Auto-generated after deploy
-├── deployments/
-│   └── arbitrum-sepolia.json  # Generated after deploy
-├── hardhat.config.js
-├── package.json
-└── .env.example
-```
-
----
-
-## Getting Started
+## Quick Start
 
 ### Prerequisites
 
 - Node.js 18+
 - MetaMask with Arbitrum Sepolia network
-- Arbitrum Sepolia ETH (faucet: https://faucet.triangleplatform.com/arbitrum/sepolia)
+- Arbitrum Sepolia ETH — [faucet](https://faucet.triangleplatform.com/arbitrum/sepolia)
 
-### Install
+### Installation
 
 ```bash
 git clone https://github.com/xvader/GovBond.git
 cd GovBond
 npm install
-```
-
-### Configure
-
-```bash
 cp .env.example .env
+# Edit .env: add PRIVATE_KEY and optionally ARBISCAN_API_KEY
 ```
 
-Edit `.env`:
-```
-PRIVATE_KEY=your_deployer_private_key
-ARBISCAN_API_KEY=your_arbiscan_api_key   # optional, for verification
-```
-
-### Compile
+### Compile & Test
 
 ```bash
-npx hardhat compile
+npm run compile
+npm test
+npm run coverage
 ```
 
-### Test
+### Deploy
 
 ```bash
-npx hardhat test
+# Deploy core contracts (IDRPToken, IdentityRegistry, ComplianceModule, GovBondToken, GovBondVault)
+npm run deploy
+
+# Deploy BondFactory (reads addresses from deployments/arbitrum-sepolia.json)
+npm run deploy:factory
 ```
 
-All 12 tests cover:
-- Identity registry: register, verify, remove, batch
-- Bond minting: verified succeeds, unverified reverts
-- Transfers: verified→verified passes, verified→unverified reverts
-- Vault deposit: request emits event, admin fulfills, investor claims
-- Coupon distribution: correct pro-rata amounts
-- Freeze: frozen address cannot transfer
-- Pause: all transfers revert
+Both scripts write addresses to `deployments/arbitrum-sepolia.json` and `frontend/deployments.json`.
 
-### Deploy to Arbitrum Sepolia
+### Frontend Setup
 
-```bash
-npx hardhat run scripts/deploy.js --network arbitrumSepolia
-```
-
-This will:
-1. Deploy all 5 contracts in dependency order
-2. Wire roles and registry references
-3. Register the deployer as a verified investor
-4. Mint 1,000,000 USDC to the deployer for testing
-5. Write addresses to `deployments/arbitrum-sepolia.json` **and** `frontend/deployments.json`
-
----
-
-## Frontend
-
-Open `frontend/index.html` in a browser (or serve it locally):
+After deployment, open any of the frontend apps directly in a browser (no build step):
 
 ```bash
 cd frontend
-npx serve .   # or python3 -m http.server 8080
+npx serve .   # or: python3 -m http.server 8080
 ```
 
-The frontend auto-loads contract addresses from `./deployments.json` on startup. If addresses are not configured, a red banner is shown and all buttons are disabled.
+## Frontend Apps
 
-**Three panels:**
+| App | File | Purpose |
+|---|---|---|
+| Investor Portal | `frontend/index.html` | Subscribe, view holdings, claim coupons, redeem |
+| Issuer Portal | `frontend/deploy-bond.html` | Deploy new bond series via BondFactory |
+| Admin Dashboard | `frontend/admin.html` | KYC management, fulfillment, coupon distribution, compliance |
 
-**Bond Info** — name, symbol, coupon rate, maturity date, total supply, contract link on Arbiscan.
+## User Flows
 
-**Investor Dashboard** — wallet address, KYC status badge, USDC balance, PMB25 holdings (with masked/reveal toggle), pending deposit, claimable bonds, total coupons received.
+**Subscription:**
+1. Investor calls `idrp.approve(vault, amount)`
+2. Investor calls `vault.requestDeposit(amount, controller, owner)`
+3. Admin calls `vault.fulfillDeposits([investor])`
+4. Investor calls `vault.deposit(amount, receiver, controller)` → receives PMB25
 
-**Actions:**
-- *Subscribe* — enter USDC amount → `requestDeposit()`
-- *Redeem* — enter bond units → `requestRedeem()` (only works post-maturity)
-- *Admin* (deployer only) — register investors, fulfill deposits, distribute coupons, mint test USDC
+**Coupon Distribution:**
+1. Admin calls `idrp.approve(vault, totalPool)`
+2. Admin calls `vault.distributeCoupon(totalPool)` → pro-rata payout to all holders
 
-Every transaction shows a link to Arbiscan after confirmation.
+**Redemption (post-maturity):**
+1. Investor calls `bond.approve(vault, shares)`
+2. Investor calls `vault.requestRedeem(shares, controller, owner)`
+3. Admin calls `vault.fulfillRedemptions([investor])`
+4. Investor calls `vault.redeem(shares, receiver, controller)` → receives IDRP, PMB25 burned
 
----
+## Security
 
-## Security Notes
+See [SECURITY_AUDIT.md](SECURITY_AUDIT.md) for the full audit report.
 
-- **KYC-gated transfers** — no token movement is possible without both parties being registered in `IdentityRegistry`
-- **Maturity enforcement** — redemption requests revert before `maturityDate`
-- **USDC drain protection** — `withdrawDust` blocks USDC unless `emergencyWithdrawUSDC` is explicitly enabled by admin
-- **Pause circuit breaker** — admin can halt all transfers instantly
-- **Forced transfer** — agent can move tokens for regulatory compliance (e.g. court order)
-- **Private keys** — never commit `.env`; use hardware wallets for mainnet deployment
+Key protections:
+- `ReentrancyGuard` on all vault state-changing functions
+- KYC-gated transfers — no token movement without both parties in `IdentityRegistry`
+- Maturity enforcement — redemption requests revert before `maturityDate`
+- No public mint — `IDRPToken` requires `MINTER_ROLE`; faucet has 24hr cooldown
+- Custom errors for gas-efficient reverts in `GovBondVault`
+- `forcedTransfer` uses a flag to bypass compliance for regulatory actions; flag is resettable by admin
 
----
+## IDRP Token
 
-## Network
+`IDRPToken` uses **2 decimals** (sen subunit). Key conversions:
 
-| Parameter | Value |
+| Value | IDRP base units |
 |---|---|
-| Network | Arbitrum Sepolia |
-| Chain ID | 421614 |
-| RPC | https://sepolia-rollup.arbitrum.io/rpc |
-| Explorer | https://sepolia.arbiscan.io |
+| Rp 1.00 | `100` |
+| Rp 1,000,000.00 (1 bond unit) | `100_000_000` |
+| Rp 100,000,000.00 (test mint) | `10_000_000_000` |
 
----
+The vault requires `MINTER_ROLE` on `IDRPToken` to process redemptions. After deploying a new bond via `BondFactory`, the IDRP admin must manually call `idrp.grantRole(MINTER_ROLE, vaultAddress)`.
+
+## Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `PRIVATE_KEY` | Yes | Deployer wallet private key (no `0x` prefix) |
+| `ARBISCAN_API_KEY` | No | For contract verification on Arbiscan |
+
+## Contract Addresses
+
+See `deployments/arbitrum-sepolia.json` after running the deploy scripts. The file is excluded from git (`.gitignore`) — add addresses to this table after deployment:
+
+| Contract | Address |
+|---|---|
+| IDRPToken | — |
+| IdentityRegistry | — |
+| ComplianceModule | — |
+| GovBondToken (PMB25) | — |
+| GovBondVault | — |
+| BondFactory | — |
+
+## Development
+
+```bash
+npm run node          # Start local Hardhat node
+npm run deploy:local  # Deploy to local node
+npm test              # Run test suite
+npm run coverage      # Coverage report
+```
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE)

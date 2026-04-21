@@ -5,29 +5,28 @@ import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 interface IGovBondToken {
     function mint(address to, uint256 amount) external;
     function burn(uint256 amount) external;
-    function burnFrom(address from, uint256 amount) external;
     function balanceOf(address account) external view returns (uint256);
     function totalSupply() external view returns (uint256);
     function maxSupply() external view returns (uint256);
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
-    function transfer(address to, uint256 amount) external returns (bool);
     function couponRate() external view returns (uint256);
     function maturityDate() external view returns (uint256);
     function redeemable() external view returns (bool);
 }
 
-contract GovBondVault is AccessControl {
+/// @notice ERC-7540 async vault for GovBond municipal bond subscriptions and redemptions.
+/// @dev IDRP: 2 decimals. 1 bond unit = bondPrice IDRP base units.
+///      Example: bondPrice=100_000_000 → Rp 1,000,000.00 per bond unit.
+///      deposit(100_000_000) → 1 bond unit minted (0-decimal).
+///      redeem(1) → 100_000_000 IDRP base units returned.
+contract GovBondVault is AccessControl, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using EnumerableSet for EnumerableSet.AddressSet;
-
-    // IDRP: 2 decimals. 1 bond unit = faceValueIDRP IDRP base units.
-    // Example: faceValue=100_000_000 means Rp 1,000,000.00
-    // deposit(100_000_000, ...) → 1 bond unit minted (0-decimal)
-    // redeem(1, ...) → 100_000_000 IDRP base units returned
 
     bytes32 public constant AGENT_ROLE = keccak256("AGENT_ROLE");
 
@@ -68,6 +67,22 @@ contract GovBondVault is AccessControl {
 
     EnumerableSet.AddressSet private _bondholders;
 
+    // ── Custom errors ─────────────────────────────────────────────────────────
+    error ZeroAssets();
+    error PendingDepositExists();
+    error ZeroShares();
+    error PendingRedeemExists();
+    error BondNotMatured();
+    error NoRequest();
+    error NotClaimable();
+    error AmountMismatch();
+    error NotWholeNumberOfBonds();
+    error BondCapReached();
+    error ZeroCoupon();
+    error NoSupply();
+    error UseEmergencyFlag();
+
+    // ── Events ────────────────────────────────────────────────────────────────
     event DepositRequest_(uint256 indexed requestId, address indexed controller, address indexed owner, uint256 assets);
     event RedeemRequest_(uint256 indexed requestId, address indexed controller, address indexed owner, uint256 shares);
     event DepositClaimable(uint256 indexed requestId, address indexed controller, uint256 assets);
@@ -87,18 +102,18 @@ contract GovBondVault is AccessControl {
     }
 
     function _trackHolder(address addr) internal {
-        if (bondToken.balanceOf(addr) > 0) {
-            _bondholders.add(addr);
-        } else {
-            _bondholders.remove(addr);
-        }
+        if (bondToken.balanceOf(addr) > 0) _bondholders.add(addr);
+        else _bondholders.remove(addr);
     }
 
     // ── ERC-7540 Deposit ──────────────────────────────────────────────────────
 
-    function requestDeposit(uint256 assets, address controller, address owner) external returns (uint256 requestId) {
-        require(assets > 0, "Zero assets");
-        require(!hasPendingDeposit[controller], "Pending deposit exists");
+    /// @notice Investor submits a deposit request. IDRP is locked in vault.
+    function requestDeposit(uint256 assets, address controller, address owner)
+        external nonReentrant returns (uint256 requestId)
+    {
+        if (assets == 0) revert ZeroAssets();
+        if (hasPendingDeposit[controller]) revert PendingDepositExists();
         idrp.safeTransferFrom(owner, address(this), assets);
         requestId = nextDepositRequestId++;
         depositRequests[requestId] = DepositRequest(controller, assets, block.timestamp, false, false);
@@ -107,27 +122,34 @@ contract GovBondVault is AccessControl {
         emit DepositRequest_(requestId, controller, owner, assets);
     }
 
+    /// @notice Returns pending (not yet claimable) deposit amount for a request.
     function pendingDepositRequest(uint256 requestId, address controller) external view returns (uint256) {
         DepositRequest storage r = depositRequests[requestId];
         if (r.investor != controller || r.claimable || r.claimed) return 0;
         return r.assets;
     }
 
+    /// @notice Returns claimable deposit amount for a request.
     function claimableDepositRequest(uint256 requestId, address controller) external view returns (uint256) {
         DepositRequest storage r = depositRequests[requestId];
         if (r.investor != controller || !r.claimable || r.claimed) return 0;
         return r.assets;
     }
 
-    function deposit(uint256 assets, address receiver, address controller) external returns (uint256 shares) {
+    /// @notice Investor claims bond tokens after admin fulfills deposit.
+    /// @param assets Must equal the original request amount and be a whole multiple of bondPrice.
+    function deposit(uint256 assets, address receiver, address controller)
+        external nonReentrant returns (uint256 shares)
+    {
         uint256 requestId = investorDepositRequestId[controller];
         DepositRequest storage r = depositRequests[requestId];
-        require(r.investor == controller, "No request");
-        require(r.claimable && !r.claimed, "Not claimable");
-        require(r.assets == assets, "Amount mismatch");
-        require(assets % bondPrice == 0, "Amount must be a whole number of bonds");
+        if (r.investor != controller) revert NoRequest();
+        if (!r.claimable || r.claimed) revert NotClaimable();
+        if (r.assets != assets) revert AmountMismatch();
+        if (assets % bondPrice != 0) revert NotWholeNumberOfBonds();
         shares = assets / bondPrice;
-        require(bondToken.totalSupply() + shares <= bondToken.maxSupply(), "Bond cap reached");
+        if (bondToken.totalSupply() + shares > bondToken.maxSupply()) revert BondCapReached();
+        // effects before interactions
         r.claimed = true;
         hasPendingDeposit[controller] = false;
         bondToken.mint(receiver, shares);
@@ -136,10 +158,14 @@ contract GovBondVault is AccessControl {
 
     // ── ERC-7540 Redeem ───────────────────────────────────────────────────────
 
-    function requestRedeem(uint256 shares, address controller, address owner) external returns (uint256 requestId) {
-        require(bondToken.redeemable(), "Bond not yet matured");
-        require(shares > 0, "Zero shares");
-        require(!hasPendingRedeem[controller], "Pending redeem exists");
+    /// @notice Investor submits a redemption request. Bond tokens are locked in vault.
+    /// @dev Reverts if bond has not reached maturityDate.
+    function requestRedeem(uint256 shares, address controller, address owner)
+        external nonReentrant returns (uint256 requestId)
+    {
+        if (!bondToken.redeemable()) revert BondNotMatured();
+        if (shares == 0) revert ZeroShares();
+        if (hasPendingRedeem[controller]) revert PendingRedeemExists();
         bondToken.transferFrom(owner, address(this), shares);
         requestId = nextRedeemRequestId++;
         redeemRequests[requestId] = RedeemRequest(controller, shares, block.timestamp, false, false);
@@ -148,25 +174,30 @@ contract GovBondVault is AccessControl {
         emit RedeemRequest_(requestId, controller, owner, shares);
     }
 
+    /// @notice Returns pending (not yet claimable) redeem shares for a request.
     function pendingRedeemRequest(uint256 requestId, address controller) external view returns (uint256) {
         RedeemRequest storage r = redeemRequests[requestId];
         if (r.investor != controller || r.claimable || r.claimed) return 0;
         return r.shares;
     }
 
+    /// @notice Returns claimable redeem shares for a request.
     function claimableRedeemRequest(uint256 requestId, address controller) external view returns (uint256) {
         RedeemRequest storage r = redeemRequests[requestId];
         if (r.investor != controller || !r.claimable || r.claimed) return 0;
         return r.shares;
     }
 
-    function redeem(uint256 shares, address receiver, address controller) external returns (uint256 assets) {
+    /// @notice Investor claims IDRP after admin fulfills redemption. Bond tokens are burned.
+    function redeem(uint256 shares, address receiver, address controller)
+        external nonReentrant returns (uint256 assets)
+    {
         uint256 requestId = investorRedeemRequestId[controller];
         RedeemRequest storage r = redeemRequests[requestId];
-        require(r.investor == controller, "No request");
-        require(r.claimable && !r.claimed, "Not claimable");
-        require(r.shares == shares, "Amount mismatch");
-        // checks-effects-interactions
+        if (r.investor != controller) revert NoRequest();
+        if (!r.claimable || r.claimed) revert NotClaimable();
+        if (r.shares != shares) revert AmountMismatch();
+        // checks-effects-interactions: update state before external calls
         r.claimed = true;
         hasPendingRedeem[controller] = false;
         assets = shares * bondPrice;
@@ -177,6 +208,7 @@ contract GovBondVault is AccessControl {
 
     // ── Admin fulfillment ─────────────────────────────────────────────────────
 
+    /// @notice Admin approves pending deposit requests, making them claimable.
     function fulfillDeposits(address[] calldata investors) external onlyRole(AGENT_ROLE) {
         for (uint256 i = 0; i < investors.length; i++) {
             address inv = investors[i];
@@ -190,6 +222,7 @@ contract GovBondVault is AccessControl {
         }
     }
 
+    /// @notice Admin approves pending redemption requests, making them claimable.
     function fulfillRedemptions(address[] calldata investors) external onlyRole(AGENT_ROLE) {
         for (uint256 i = 0; i < investors.length; i++) {
             address inv = investors[i];
@@ -205,11 +238,13 @@ contract GovBondVault is AccessControl {
 
     // ── Coupon distribution ───────────────────────────────────────────────────
 
-    function distributeCoupon(uint256 totalCouponPool) external onlyRole(AGENT_ROLE) {
-        require(totalCouponPool > 0, "Zero coupon");
+    /// @notice Distributes IDRP pro-rata to all bondholders. Dust is returned to caller.
+    /// @param totalCouponPool Total IDRP (2 decimals) to distribute.
+    function distributeCoupon(uint256 totalCouponPool) external nonReentrant onlyRole(AGENT_ROLE) {
+        if (totalCouponPool == 0) revert ZeroCoupon();
         idrp.safeTransferFrom(msg.sender, address(this), totalCouponPool);
         uint256 totalSupply = bondToken.totalSupply();
-        require(totalSupply > 0, "No supply");
+        if (totalSupply == 0) revert NoSupply();
         uint256 len = _bondholders.length();
         uint256 totalPaid;
         for (uint256 i = 0; i < len; i++) {
@@ -232,33 +267,41 @@ contract GovBondVault is AccessControl {
         emit CouponDistributed(totalCouponPool, len, block.timestamp);
     }
 
+    /// @notice Returns all current bondholder addresses.
     function getHolders() external view returns (address[] memory) {
         return _bondholders.values();
     }
 
     // ── Admin utilities ───────────────────────────────────────────────────────
 
+    /// @notice Update bond price. Emits BondPriceUpdated.
     function setBondPrice(uint256 _price) external onlyRole(DEFAULT_ADMIN_ROLE) {
         emit BondPriceUpdated(bondPrice, _price);
         bondPrice = _price;
     }
 
+    /// @notice Unblock an investor with a stuck deposit request.
     function resetDepositRequest(address investor) external onlyRole(DEFAULT_ADMIN_ROLE) {
         depositRequests[investorDepositRequestId[investor]].claimed = true;
         hasPendingDeposit[investor] = false;
     }
 
+    /// @notice Unblock an investor with a stuck redemption request.
     function resetRedeemRequest(address investor) external onlyRole(DEFAULT_ADMIN_ROLE) {
         redeemRequests[investorRedeemRequestId[investor]].claimed = true;
         hasPendingRedeem[investor] = false;
     }
 
-    function sweepToken(address token, address to, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(token != address(idrp) || emergencyWithdrawIDRP, "Use emergencyWithdrawIDRP flag");
+    /// @notice Recover non-IDRP tokens (or IDRP if emergency flag is set).
+    function sweepToken(address token, address to, uint256 amount)
+        external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE)
+    {
+        if (token == address(idrp) && !emergencyWithdrawIDRP) revert UseEmergencyFlag();
         IERC20(token).safeTransfer(to, amount);
         emit TokenSwept(token, to, amount);
     }
 
+    /// @notice Two-step gate to allow IDRP recovery via sweepToken.
     function setEmergencyWithdrawIDRP(bool enabled) external onlyRole(DEFAULT_ADMIN_ROLE) {
         emergencyWithdrawIDRP = enabled;
     }

@@ -32,6 +32,7 @@ contract IdentityRegistry is AccessControl {
 
     function batchRegister(address[] calldata investors, string[] calldata countries) external onlyRole(AGENT_ROLE) {
         require(investors.length == countries.length, "Length mismatch");
+        require(investors.length <= 200, "Batch too large");
         for (uint256 i = 0; i < investors.length; i++) {
             isVerified[investors[i]] = true;
             investorCountry[investors[i]] = countries[i];

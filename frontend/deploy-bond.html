@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GovBond — Issuer Portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #1a3d2b;
+    --bg2: #142e20;
+    --gold: #c9a84c;
+    --gold-light: #e8c96a;
+    --text: #f0ead8;
+    --text-muted: #a89f88;
+    --border: #2e5c3e;
+    --success: #4caf7d;
+    --danger: #e05c5c;
+    --card: #1f4a33;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'IBM Plex Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Cpath d='M0 0h60v60H0z' fill='none'/%3E%3Cpath d='M30 0L60 30L30 60L0 30Z' fill='none' stroke='%232e5c3e' stroke-width='0.5' opacity='0.4'/%3E%3Cpath d='M15 0L30 15L45 0M15 60L30 45L45 60M0 15L15 30L0 45M60 15L45 30L60 45' fill='none' stroke='%23c9a84c' stroke-width='0.3' opacity='0.15'/%3E%3C/svg%3E");
+  }
+  header {
+    background: var(--bg2);
+    border-bottom: 2px solid var(--gold);
+    padding: 16px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .logo-icon {
+    width: 36px;
+    height: 36px;
+    background: var(--gold);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    color: var(--bg2);
+    font-size: 14px;
+  }
+  .logo-text { font-size: 18px; font-weight: 600; color: var(--gold); }
+  .logo-sub { font-size: 12px; color: var(--text-muted); }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  .badge {
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: 'IBM Plex Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .badge-network { background: #1a3d5c; color: #6ab4e8; border: 1px solid #2a5c8c; }
+  .badge-authorized { background: #1a3d2b; color: var(--success); border: 1px solid var(--success); }
+  .badge-unauthorized { background: #3d1a1a; color: var(--danger); border: 1px solid var(--danger); }
+  .badge-pending { background: #3d3a1a; color: var(--gold); border: 1px solid var(--gold); }
+  .btn {
+    padding: 8px 18px;
+    border-radius: 4px;
+    border: none;
+    cursor: pointer;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    transition: opacity 0.15s;
+  }
+  .btn:hover { opacity: 0.85; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-gold { background: var(--gold); color: var(--bg2); }
+  .btn-outline { background: transparent; color: var(--gold); border: 1px solid var(--gold); }
+  .btn-danger { background: var(--danger); color: #fff; }
+  main { max-width: 1100px; margin: 0 auto; padding: 32px 24px; }
+  .section { margin-bottom: 40px; }
+  .section-title {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--gold);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+    margin-bottom: 20px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 24px;
+  }
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .form-group { display: flex; flex-direction: column; gap: 6px; }
+  .form-group.full { grid-column: 1 / -1; }
+  label { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  input, select {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    padding: 9px 12px;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  input:focus, select:focus { border-color: var(--gold); }
+  input::placeholder { color: var(--text-muted); }
+  .preview-panel {
+    background: var(--bg2);
+    border: 1px solid var(--gold);
+    border-radius: 4px;
+    padding: 16px;
+    margin-top: 16px;
+  }
+  .preview-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .preview-value { font-size: 22px; font-weight: 600; color: var(--gold); font-family: 'IBM Plex Mono', monospace; margin-top: 4px; }
+  .deploy-result {
+    background: var(--bg2);
+    border: 1px solid var(--success);
+    border-radius: 6px;
+    padding: 20px;
+    margin-top: 20px;
+    display: none;
+  }
+  .deploy-result.show { display: block; }
+  .addr {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    color: var(--gold-light);
+    word-break: break-all;
+  }
+  .checklist { list-style: none; margin-top: 12px; }
+  .checklist li {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .checklist li:last-child { border-bottom: none; }
+  .check-num {
+    background: var(--gold);
+    color: var(--bg2);
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .calldata {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px 12px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 6px;
+    word-break: break-all;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th {
+    text-align: left;
+    padding: 10px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+  }
+  td { padding: 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(201,168,76,0.04); }
+  .status-active { color: var(--success); font-weight: 600; }
+  .status-matured { color: var(--gold); font-weight: 600; }
+  .link { color: var(--gold); text-decoration: none; font-family: 'IBM Plex Mono', monospace; font-size: 12px; }
+  .link:hover { text-decoration: underline; }
+  .empty-state { text-align: center; padding: 40px; color: var(--text-muted); font-size: 14px; }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--gold); border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .alert {
+    padding: 12px 16px;
+    border-radius: 4px;
+    font-size: 13px;
+    margin-bottom: 16px;
+    display: none;
+  }
+  .alert.show { display: block; }
+  .alert-error { background: #3d1a1a; border: 1px solid var(--danger); color: #f08080; }
+  .alert-success { background: #1a3d2b; border: 1px solid var(--success); color: #80c8a0; }
+  .not-connected { text-align: center; padding: 80px 20px; color: var(--text-muted); }
+  .not-connected h2 { color: var(--gold); margin-bottom: 12px; }
+  .tx-link { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--gold); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">GB</div>
+    <div>
+      <div class="logo-text">GovBond</div>
+      <div class="logo-sub">Issuer Portal</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <span class="badge badge-network">Arbitrum Sepolia</span>
+    <span id="roleBadge" class="badge badge-pending" style="display:none"></span>
+    <button class="btn btn-gold" id="connectBtn" onclick="connectWallet()">Connect Wallet</button>
+    <span id="walletAddr" style="display:none;font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--text-muted)"></span>
+  </div>
+</header>
+
+<main>
+  <div id="notConnected" class="not-connected">
+    <h2>GovBond Issuer Portal</h2>
+    <p>Connect your wallet to deploy and manage bond series.</p>
+    <br>
+    <button class="btn btn-gold" onclick="connectWallet()">Connect Wallet</button>
+  </div>
+
+  <div id="appContent" style="display:none">
+
+    <!-- DEPLOY NEW BOND -->
+    <div class="section">
+      <div class="section-title">Deploy New Bond Series</div>
+      <div class="card">
+        <div id="notIssuerWarning" class="alert alert-error" style="display:none">
+          Your wallet does not have ISSUER_ROLE on BondFactory. Contact the admin to grant access.
+        </div>
+        <div id="deployAlert" class="alert"></div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Bond Name</label>
+            <input type="text" id="bondName" placeholder="Palembang Municipal Bond 2026" maxlength="64">
+          </div>
+          <div class="form-group">
+            <label>Symbol (max 8 chars)</label>
+            <input type="text" id="bondSymbol" placeholder="PMB26" maxlength="8" oninput="this.value=this.value.toUpperCase()">
+          </div>
+          <div class="form-group">
+            <label>Face Value (Rp per unit)</label>
+            <input type="number" id="faceValue" value="1000000" min="1">
+          </div>
+          <div class="form-group">
+            <label>Coupon Rate (% p.a.)</label>
+            <input type="number" id="couponRate" value="7.5" step="0.01" min="0" max="50">
+          </div>
+          <div class="form-group">
+            <label>Maturity (months)</label>
+            <input type="number" id="maturityMonths" value="12" min="1" max="120">
+          </div>
+          <div class="form-group">
+            <label>Maximum Supply (units)</label>
+            <input type="number" id="maxSupply" value="100000" min="1" max="1000000">
+          </div>
+        </div>
+        <div class="preview-panel">
+          <div class="preview-label">Total Bond Programme Value</div>
+          <div class="preview-value" id="totalValue">Rp 0</div>
+        </div>
+        <div style="margin-top:20px">
+          <button class="btn btn-gold" id="deployBtn" onclick="deployBond()" disabled>Deploy Bond</button>
+        </div>
+
+        <div class="deploy-result" id="deployResult">
+          <div style="color:var(--success);font-weight:600;margin-bottom:12px">✓ Bond Deployed Successfully</div>
+          <div style="margin-bottom:8px;font-size:13px;color:var(--text-muted)">Transaction</div>
+          <div id="deployTxHash" class="addr"></div>
+          <div style="margin-top:16px;margin-bottom:8px;font-size:13px;color:var(--text-muted)">Bond Token Contract</div>
+          <div id="deployBondToken" class="addr"></div>
+          <div style="margin-top:12px;margin-bottom:8px;font-size:13px;color:var(--text-muted)">Vault Contract</div>
+          <div id="deployVaultAddr" class="addr"></div>
+
+          <div style="margin-top:20px;font-size:13px;font-weight:600;color:var(--gold)">Post-Deploy Setup Checklist</div>
+          <ul class="checklist" id="setupChecklist">
+            <li>
+              <span class="check-num">1</span>
+              <div>
+                <div>Grant MINTER_ROLE to vault on IDRP token</div>
+                <div class="calldata" id="minterCalldata"></div>
+              </div>
+            </li>
+            <li>
+              <span class="check-num">2</span>
+              <div>Register investor wallets in IdentityRegistry via the Admin Dashboard</div>
+            </li>
+            <li>
+              <span class="check-num">3</span>
+              <div>Fund vault with IDRP for coupon distribution (approve + transfer to vault)</div>
+            </li>
+            <li>
+              <span class="check-num">4</span>
+              <div>Share investor-facing app URL: <span style="font-family:'IBM Plex Mono',monospace;font-size:12px">./index.html</span></div>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- DEPLOYED BONDS TABLE -->
+    <div class="section">
+      <div class="section-title">Deployed Bonds</div>
+      <div class="card" style="padding:0;overflow:hidden">
+        <div id="bondsTableWrap">
+          <div class="empty-state">Loading bonds...</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<script>
+const ARBISCAN = "https://sepolia.arbiscan.io";
+let provider, signer, walletAddress;
+let DEPLOYMENTS = null;
+let factoryContract = null;
+
+const FACTORY_ABI = [
+  "function deployBond(string,string,uint256,uint256,uint256,uint256) returns (address,address)",
+  "function getAllBonds() view returns (tuple(address bondToken,address vault,string name,string symbol,uint256 faceValueIDRP,uint256 couponRate,uint256 maturityDate,uint256 maxSupply,uint256 deployedAt,address deployer)[])",
+  "function getBondsCount() view returns (uint256)",
+  "function hasRole(bytes32,address) view returns (bool)"
+];
+
+const BOND_TOKEN_ABI = [
+  "function maturityDate() view returns (uint256)",
+  "function paused() view returns (bool)"
+];
+
+const ISSUER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("ISSUER_ROLE"));
+const MINTER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("MINTER_ROLE"));
+
+async function init() {
+  try {
+    const res = await fetch('./deployments.json');
+    DEPLOYMENTS = await res.json();
+  } catch(e) {
+    console.warn("deployments.json not found");
+  }
+  setupPreview();
+}
+
+function setupPreview() {
+  ['faceValue','maxSupply'].forEach(id => {
+    document.getElementById(id).addEventListener('input', updatePreview);
+  });
+  updatePreview();
+}
+
+function updatePreview() {
+  const fv = parseFloat(document.getElementById('faceValue').value) || 0;
+  const ms = parseFloat(document.getElementById('maxSupply').value) || 0;
+  const total = fv * ms;
+  document.getElementById('totalValue').textContent = 'Rp ' + total.toLocaleString('id-ID');
+}
+
+async function connectWallet() {
+  if (!window.ethereum) { alert("MetaMask not found"); return; }
+  try {
+    provider = new ethers.BrowserProvider(window.ethereum);
+    await provider.send("eth_requestAccounts", []);
+    signer = await provider.getSigner();
+    walletAddress = await signer.getAddress();
+
+    document.getElementById('connectBtn').style.display = 'none';
+    document.getElementById('walletAddr').style.display = 'inline';
+    document.getElementById('walletAddr').textContent = walletAddress.slice(0,6) + '...' + walletAddress.slice(-4);
+    document.getElementById('notConnected').style.display = 'none';
+    document.getElementById('appContent').style.display = 'block';
+
+    window.ethereum.on('accountsChanged', () => location.reload());
+    window.ethereum.on('chainChanged', () => location.reload());
+
+    await checkRole();
+    await loadBonds();
+  } catch(e) {
+    console.error(e);
+  }
+}
+
+async function checkRole() {
+  if (!DEPLOYMENTS?.BondFactory) {
+    document.getElementById('roleBadge').style.display = 'inline';
+    document.getElementById('roleBadge').className = 'badge badge-unauthorized';
+    document.getElementById('roleBadge').textContent = 'No Factory';
+    return;
+  }
+  factoryContract = new ethers.Contract(DEPLOYMENTS.BondFactory, FACTORY_ABI, signer);
+  const isIssuer = await factoryContract.hasRole(ISSUER_ROLE, walletAddress);
+  const badge = document.getElementById('roleBadge');
+  badge.style.display = 'inline';
+  if (isIssuer) {
+    badge.className = 'badge badge-authorized';
+    badge.textContent = 'Authorized Issuer';
+    document.getElementById('deployBtn').disabled = false;
+    document.getElementById('notIssuerWarning').style.display = 'none';
+  } else {
+    badge.className = 'badge badge-unauthorized';
+    badge.textContent = 'Not Authorized';
+    document.getElementById('notIssuerWarning').style.display = 'block';
+  }
+}
+
+async function deployBond() {
+  const name = document.getElementById('bondName').value.trim();
+  const symbol = document.getElementById('bondSymbol').value.trim();
+  const faceValueRp = parseFloat(document.getElementById('faceValue').value);
+  const couponPct = parseFloat(document.getElementById('couponRate').value);
+  const months = parseInt(document.getElementById('maturityMonths').value);
+  const maxSupplyUnits = parseInt(document.getElementById('maxSupply').value);
+
+  const alertEl = document.getElementById('deployAlert');
+  alertEl.className = 'alert';
+  alertEl.style.display = 'none';
+
+  if (!name || name.length > 64) { showAlert('deployAlert', 'error', 'Bond name is required (max 64 chars)'); return; }
+  if (!symbol || symbol.length < 2 || symbol.length > 8) { showAlert('deployAlert', 'error', 'Symbol must be 2–8 characters'); return; }
+  if (!faceValueRp || faceValueRp < 1) { showAlert('deployAlert', 'error', 'Invalid face value'); return; }
+  if (couponPct < 0 || couponPct > 50) { showAlert('deployAlert', 'error', 'Coupon rate must be 0–50%'); return; }
+  if (months < 1 || months > 120) { showAlert('deployAlert', 'error', 'Maturity must be 1–120 months'); return; }
+  if (maxSupplyUnits < 1 || maxSupplyUnits > 1_000_000) { showAlert('deployAlert', 'error', 'Max supply must be 1–1,000,000'); return; }
+
+  // Convert: faceValue in Rp → IDRP base units (2 decimals)
+  const faceValueIDRP = BigInt(Math.round(faceValueRp * 100));
+  const couponRateBps = BigInt(Math.round(couponPct * 100));
+
+  const btn = document.getElementById('deployBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Deploying...';
+
+  try {
+    const tx = await factoryContract.deployBond(
+      name, symbol, faceValueIDRP, couponRateBps, BigInt(months), BigInt(maxSupplyUnits)
+    );
+    showAlert('deployAlert', 'success', `Transaction submitted: ${tx.hash.slice(0,10)}...`);
+    const receipt = await tx.wait();
+
+    // Parse BondDeployed event
+    const iface = new ethers.Interface([
+      "event BondDeployed(address indexed bondToken, address indexed vault, address indexed issuer, string symbol, uint256 maturityDate)"
+    ]);
+    let bondTokenAddr = '', vaultAddr = '';
+    for (const log of receipt.logs) {
+      try {
+        const parsed = iface.parseLog(log);
+        if (parsed?.name === 'BondDeployed') {
+          bondTokenAddr = parsed.args.bondToken;
+          vaultAddr = parsed.args.vault;
+        }
+      } catch {}
+    }
+
+    document.getElementById('deployTxHash').innerHTML =
+      `<a class="link" href="${ARBISCAN}/tx/${receipt.hash}" target="_blank">${receipt.hash}</a>`;
+    document.getElementById('deployBondToken').innerHTML =
+      `<a class="link" href="${ARBISCAN}/address/${bondTokenAddr}" target="_blank">${bondTokenAddr}</a>`;
+    document.getElementById('deployVaultAddr').innerHTML =
+      `<a class="link" href="${ARBISCAN}/address/${vaultAddr}" target="_blank">${vaultAddr}</a>`;
+
+    // Show minter calldata
+    const idrpAddr = DEPLOYMENTS?.IDRPToken || '<IDRP_ADDRESS>';
+    document.getElementById('minterCalldata').textContent =
+      `Call on ${idrpAddr}:\ngrantRole(${MINTER_ROLE}, ${vaultAddr})`;
+
+    document.getElementById('deployResult').classList.add('show');
+    showAlert('deployAlert', 'success', 'Bond deployed successfully!');
+    await loadBonds();
+  } catch(e) {
+    showAlert('deployAlert', 'error', e.reason || e.message || 'Transaction failed');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Deploy Bond';
+  }
+}
+
+async function loadBonds() {
+  const wrap = document.getElementById('bondsTableWrap');
+  if (!factoryContract) {
+    wrap.innerHTML = '<div class="empty-state">Connect wallet to view bonds</div>';
+    return;
+  }
+  try {
+    const bonds = await factoryContract.getAllBonds();
+    if (bonds.length === 0) {
+      wrap.innerHTML = '<div class="empty-state">No bonds deployed yet</div>';
+      return;
+    }
+    const now = Math.floor(Date.now() / 1000);
+    let rows = '';
+    for (const b of bonds) {
+      const maturity = Number(b.maturityDate);
+      const isMatured = now >= maturity;
+      const maturityStr = new Date(maturity * 1000).toLocaleDateString('id-ID');
+      const faceRp = (Number(b.faceValueIDRP) / 100).toLocaleString('id-ID', {minimumFractionDigits:2});
+      const couponPct = (Number(b.couponRate) / 100).toFixed(2);
+      const statusClass = isMatured ? 'status-matured' : 'status-active';
+      const statusText = isMatured ? 'Matured' : 'Active';
+      rows += `<tr>
+        <td>${b.name}</td>
+        <td><strong>${b.symbol}</strong></td>
+        <td style="font-family:'IBM Plex Mono',monospace">Rp ${faceRp}</td>
+        <td>${couponPct}%</td>
+        <td>${maturityStr}</td>
+        <td style="font-family:'IBM Plex Mono',monospace">${Number(b.maxSupply).toLocaleString()}</td>
+        <td class="${statusClass}">${statusText}</td>
+        <td>
+          <a class="link" href="${ARBISCAN}/address/${b.bondToken}" target="_blank">Token ↗</a>
+          &nbsp;
+          <a class="link" href="${ARBISCAN}/address/${b.vault}" target="_blank">Vault ↗</a>
+        </td>
+      </tr>`;
+    }
+    wrap.innerHTML = `<table>
+      <thead><tr>
+        <th>Bond Name</th><th>Symbol</th><th>Face Value</th><th>Coupon</th>
+        <th>Maturity</th><th>Max Supply</th><th>Status</th><th>Actions</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  } catch(e) {
+    wrap.innerHTML = `<div class="empty-state">Error loading bonds: ${e.message}</div>`;
+  }
+}
+
+function showAlert(id, type, msg) {
+  const el = document.getElementById(id);
+  el.className = `alert alert-${type} show`;
+  el.textContent = msg;
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>

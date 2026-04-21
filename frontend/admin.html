@@ -1,0 +1,1067 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GovBond — Admin Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
+<style>
+:root {
+  --sidebar: #0d3349;
+  --sidebar-hover: #0f3d57;
+  --bg: #f5f0e8;
+  --bg2: #ede8df;
+  --gold: #c9a84c;
+  --gold-dark: #a8882e;
+  --teal: #0d3349;
+  --text: #1a2a35;
+  --text-muted: #6b7c8a;
+  --border: #d8d0c0;
+  --success: #2e7d52;
+  --danger: #c0392b;
+  --warning: #b8860b;
+  --card: #ffffff;
+  --table-head: #f0ebe0;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Plus Jakarta Sans', sans-serif; background: var(--bg); color: var(--text); display: flex; min-height: 100vh; font-size: 14px; }
+
+/* Sidebar */
+#sidebar {
+  width: 220px; min-width: 220px; background: var(--sidebar); color: #e0eaf0;
+  display: flex; flex-direction: column; position: fixed; top: 0; left: 0; height: 100vh; z-index: 200; overflow-y: auto;
+}
+.sidebar-logo { padding: 20px 16px 16px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+.sidebar-logo-title { font-size: 16px; font-weight: 700; color: var(--gold); }
+.sidebar-logo-sub { font-size: 11px; color: rgba(255,255,255,0.4); margin-top: 2px; }
+.sidebar-wallet { padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+#connectBtn { width: 100%; padding: 8px; background: var(--gold); color: var(--teal); border: none; border-radius: 4px; font-weight: 600; font-size: 12px; cursor: pointer; font-family: 'Plus Jakarta Sans', sans-serif; }
+#connectBtn:hover { background: #e0b84e; }
+#walletInfo { display: none; }
+.wallet-addr { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: rgba(255,255,255,0.6); margin-bottom: 6px; }
+.role-badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.rbadge { padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.rbadge-admin { background: rgba(201,168,76,0.2); color: var(--gold); border: 1px solid rgba(201,168,76,0.4); }
+.rbadge-issuer { background: rgba(46,125,82,0.2); color: #5cb88a; border: 1px solid rgba(46,125,82,0.4); }
+.rbadge-agent { background: rgba(100,160,220,0.2); color: #80b8e8; border: 1px solid rgba(100,160,220,0.4); }
+nav { flex: 1; padding: 8px 0; }
+.nav-item { display: block; padding: 9px 16px; color: rgba(255,255,255,0.65); font-size: 13px; cursor: pointer; border-left: 3px solid transparent; transition: all 0.15s; }
+.nav-item:hover { background: var(--sidebar-hover); color: #fff; }
+.nav-item.active { background: var(--sidebar-hover); color: var(--gold); border-left-color: var(--gold); font-weight: 600; }
+
+/* Main */
+#main { margin-left: 220px; flex: 1; padding: 28px 32px; min-height: 100vh; }
+.section { display: none; }
+.section.active { display: block; }
+.section-title { font-size: 18px; font-weight: 700; color: var(--teal); margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid var(--border); }
+
+/* Cards */
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 20px; }
+.stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+.stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 16px 20px; }
+.stat-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); }
+.stat-value { font-size: 24px; font-weight: 700; color: var(--teal); margin-top: 6px; font-family: 'IBM Plex Mono', monospace; }
+.stat-sub { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+/* Tables */
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; padding: 10px 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); background: var(--table-head); border-bottom: 1px solid var(--border); }
+td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: rgba(201,168,76,0.04); }
+.progress-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; width: 80px; }
+.progress-fill { height: 100%; background: var(--gold); border-radius: 3px; }
+
+/* Badges */
+.badge { padding: 3px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+.badge-active { background: #e8f5ee; color: var(--success); }
+.badge-matured { background: #fdf3d8; color: var(--warning); }
+.badge-paused { background: #fde8e8; color: var(--danger); }
+.badge-yes { background: #e8f5ee; color: var(--success); }
+.badge-no { background: #fde8e8; color: var(--danger); }
+.badge-frozen { background: #fde8e8; color: var(--danger); }
+
+/* Forms */
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+.form-row.single { grid-template-columns: 1fr; }
+.form-row.triple { grid-template-columns: 1fr 1fr 1fr; }
+.form-group { display: flex; flex-direction: column; gap: 5px; }
+label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); }
+input, select, textarea {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text); padding: 8px 10px; font-family: 'Plus Jakarta Sans', sans-serif; font-size: 13px; outline: none;
+}
+input:focus, select:focus, textarea:focus { border-color: var(--gold); }
+textarea { resize: vertical; min-height: 100px; }
+
+/* Buttons */
+.btn { padding: 8px 16px; border-radius: 4px; border: none; cursor: pointer; font-family: 'Plus Jakarta Sans', sans-serif; font-size: 13px; font-weight: 600; transition: opacity 0.15s; }
+.btn:hover { opacity: 0.85; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-primary { background: var(--teal); color: #fff; }
+.btn-gold { background: var(--gold); color: var(--teal); }
+.btn-danger { background: var(--danger); color: #fff; }
+.btn-sm { padding: 5px 10px; font-size: 12px; }
+.btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+
+/* Misc */
+.addr { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--teal); }
+.link { color: var(--gold-dark); text-decoration: none; font-family: 'IBM Plex Mono', monospace; font-size: 12px; }
+.link:hover { text-decoration: underline; }
+.copy-btn { background: none; border: none; cursor: pointer; color: var(--text-muted); font-size: 12px; padding: 0 4px; }
+.copy-btn:hover { color: var(--gold); }
+.empty { text-align: center; padding: 32px; color: var(--text-muted); font-size: 13px; }
+.skeleton { background: linear-gradient(90deg, var(--border) 25%, var(--bg2) 50%, var(--border) 75%); background-size: 200% 100%; animation: shimmer 1.2s infinite; border-radius: 3px; height: 14px; }
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.alert { padding: 10px 14px; border-radius: 4px; font-size: 13px; margin-bottom: 12px; }
+.alert-error { background: #fde8e8; border: 1px solid #f5c6c6; color: var(--danger); }
+.alert-success { background: #e8f5ee; border: 1px solid #b8dfc8; color: var(--success); }
+.alert-info { background: #e8f0f8; border: 1px solid #b8cce0; color: #1a4a7a; }
+.tabs { display: flex; gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 20px; }
+.tab { padding: 8px 16px; cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text-muted); border-bottom: 2px solid transparent; margin-bottom: -2px; }
+.tab.active { color: var(--teal); border-bottom-color: var(--gold); }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+.readonly-banner { background: #fdf3d8; border: 1px solid #e8d080; border-radius: 4px; padding: 10px 14px; font-size: 13px; color: var(--warning); margin-bottom: 20px; }
+.tx-status { font-size: 12px; color: var(--text-muted); margin-top: 8px; }
+.spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--gold); border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; margin-right: 4px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.toast-container { position: fixed; top: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; }
+.toast { padding: 12px 16px; border-radius: 6px; font-size: 13px; max-width: 320px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); animation: slideIn 0.2s ease; }
+.toast-success { background: #e8f5ee; border: 1px solid #b8dfc8; color: var(--success); }
+.toast-error { background: #fde8e8; border: 1px solid #f5c6c6; color: var(--danger); }
+@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+.panel { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 20px; margin-bottom: 16px; }
+.panel-title { font-size: 13px; font-weight: 700; color: var(--teal); margin-bottom: 14px; text-transform: uppercase; letter-spacing: 0.5px; }
+.check-result { padding: 12px; border-radius: 4px; font-size: 13px; font-weight: 600; margin-top: 12px; display: none; }
+.check-allowed { background: #e8f5ee; color: var(--success); }
+.check-blocked { background: #fde8e8; color: var(--danger); }
+</style>
+</head>
+<body>
+
+<div id="toastContainer" class="toast-container"></div>
+
+<!-- SIDEBAR -->
+<div id="sidebar">
+  <div class="sidebar-logo">
+    <div class="sidebar-logo-title">GovBond</div>
+    <div class="sidebar-logo-sub">Admin Dashboard</div>
+  </div>
+  <div class="sidebar-wallet">
+    <button id="connectBtn" onclick="connectWallet()">Connect Wallet</button>
+    <div id="walletInfo">
+      <div class="wallet-addr" id="walletAddrDisplay"></div>
+      <div class="role-badges" id="roleBadgesDisplay"></div>
+    </div>
+  </div>
+  <nav>
+    <div class="nav-item active" onclick="showSection('overview')">Overview</div>
+    <div class="nav-item" onclick="showSection('bonds')">All Bonds</div>
+    <div class="nav-item" onclick="showSection('holders')">Bond Holders</div>
+    <div class="nav-item" onclick="showSection('kyc')">KYC Registry</div>
+    <div class="nav-item" onclick="showSection('compliance')">Compliance</div>
+    <div class="nav-item" onclick="showSection('coupons')">Coupon Distribution</div>
+    <div class="nav-item" onclick="showSection('idrp')">IDRP Token</div>
+    <div class="nav-item" onclick="showSection('settings')">Settings</div>
+  </nav>
+</div>
+
+<!-- MAIN CONTENT -->
+<div id="main">
+  <div id="readonlyBanner" class="readonly-banner" style="display:none">
+    Connect an authorized wallet to perform actions.
+  </div>
+
+  <!-- OVERVIEW -->
+  <div id="sec-overview" class="section active">
+    <div class="section-title">Overview</div>
+    <div class="stats-row">
+      <div class="stat-card"><div class="stat-label">Total Bonds</div><div class="stat-value" id="statBonds">—</div></div>
+      <div class="stat-card"><div class="stat-label">Units Outstanding</div><div class="stat-value" id="statUnits">—</div></div>
+      <div class="stat-card"><div class="stat-label">IDRP Circulation</div><div class="stat-value" id="statIDRP">—</div><div class="stat-sub" id="statIDRPSub"></div></div>
+      <div class="stat-card"><div class="stat-label">Registered Investors</div><div class="stat-value" id="statInvestors">—</div></div>
+    </div>
+    <div class="card">
+      <div style="font-size:13px;font-weight:700;color:var(--teal);margin-bottom:12px">Recent Activity</div>
+      <div id="activityTable"><div class="empty">Loading activity...</div></div>
+    </div>
+  </div>
+
+  <!-- ALL BONDS -->
+  <div id="sec-bonds" class="section">
+    <div class="section-title">All Bonds</div>
+    <div class="card" style="padding:0;overflow:hidden">
+      <div id="bondsTable"><div class="empty">Loading...</div></div>
+    </div>
+  </div>
+
+  <!-- BOND HOLDERS -->
+  <div id="sec-holders" class="section">
+    <div class="section-title">Bond Holders</div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="form-row single">
+        <div class="form-group">
+          <label>Select Bond</label>
+          <select id="holderBondSelect" onchange="loadHolders()"><option value="">— Select a bond —</option></select>
+        </div>
+      </div>
+    </div>
+    <div id="holdersBulkBar" style="display:none;margin-bottom:12px;display:flex;gap:8px">
+      <button class="btn btn-primary btn-sm" onclick="fulfillSelected('deposit')">Fulfill Deposits</button>
+      <button class="btn btn-primary btn-sm" onclick="fulfillSelected('redeem')">Fulfill Redemptions</button>
+    </div>
+    <div class="card" style="padding:0;overflow:hidden">
+      <div id="holdersTable"><div class="empty">Select a bond to view holders</div></div>
+    </div>
+    <!-- Force Transfer Modal -->
+    <div id="ftModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:500;align-items:center;justify-content:center">
+      <div class="card" style="width:400px">
+        <div style="font-weight:700;margin-bottom:16px">Force Transfer</div>
+        <div class="form-group" style="margin-bottom:12px"><label>From</label><input id="ftFrom" type="text" placeholder="0x..."></div>
+        <div class="form-group" style="margin-bottom:12px"><label>To</label><input id="ftTo" type="text" placeholder="0x..."></div>
+        <div class="form-group" style="margin-bottom:16px"><label>Amount (units)</label><input id="ftAmount" type="number" min="1"></div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-danger" onclick="doForceTransfer()">Execute</button>
+          <button class="btn btn-outline" onclick="document.getElementById('ftModal').style.display='none'">Cancel</button>
+        </div>
+        <div class="tx-status" id="ftStatus"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- KYC REGISTRY -->
+  <div id="sec-kyc" class="section">
+    <div class="section-title">KYC Registry</div>
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('kyc','register')">Register Investor</div>
+      <div class="tab" onclick="switchTab('kyc','batch')">Batch Register</div>
+    </div>
+    <div id="kyc-tab-register" class="tab-content active">
+      <div class="panel">
+        <div class="form-row">
+          <div class="form-group"><label>Wallet Address</label><input id="kycAddr" type="text" placeholder="0x..."></div>
+          <div class="form-group">
+            <label>Country (ISO-2)</label>
+            <select id="kycCountry">
+              <option value="ID">ID — Indonesia</option>
+              <option value="SG">SG — Singapore</option>
+              <option value="MY">MY — Malaysia</option>
+              <option value="US">US — United States</option>
+              <option value="GB">GB — United Kingdom</option>
+              <option value="JP">JP — Japan</option>
+              <option value="AE">AE — UAE</option>
+              <option value="HK">HK — Hong Kong</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="registerInvestor()">Register</button>
+        <div class="tx-status" id="kycRegStatus"></div>
+      </div>
+    </div>
+    <div id="kyc-tab-batch" class="tab-content">
+      <div class="panel">
+        <div class="form-group" style="margin-bottom:12px">
+          <label>Paste addresses (one per line: address,country)</label>
+          <textarea id="batchInput" placeholder="0xABC...,ID&#10;0xDEF...,SG"></textarea>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:12px">
+          <button class="btn btn-outline btn-sm" onclick="parseBatch()">Preview</button>
+          <button class="btn btn-primary" id="batchSubmitBtn" onclick="submitBatch()" disabled>Submit Batch</button>
+        </div>
+        <div id="batchPreview"></div>
+        <div class="tx-status" id="batchStatus"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- COMPLIANCE -->
+  <div id="sec-compliance" class="section">
+    <div class="section-title">Compliance</div>
+    <div class="panel">
+      <div class="panel-title">Max Holding Cap</div>
+      <div id="currentMaxHolding" style="margin-bottom:12px;font-size:13px;color:var(--text-muted)">Loading...</div>
+      <div class="form-row">
+        <div class="form-group"><label>New Cap (basis points, e.g. 1000 = 10%)</label><input id="maxHoldingInput" type="number" min="0" max="10000" placeholder="0 = disabled"></div>
+      </div>
+      <button class="btn btn-primary" onclick="updateMaxHolding()">Update</button>
+      <div class="tx-status" id="maxHoldingStatus"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Country Blocklist</div>
+      <div id="countryTable"><div class="empty">Loading...</div></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Transfer Check Tool</div>
+      <div class="form-row triple">
+        <div class="form-group"><label>From</label><input id="checkFrom" type="text" placeholder="0x..."></div>
+        <div class="form-group"><label>To</label><input id="checkTo" type="text" placeholder="0x..."></div>
+        <div class="form-group"><label>Amount</label><input id="checkAmount" type="number" value="1" min="1"></div>
+      </div>
+      <button class="btn btn-outline" onclick="checkTransfer()">Check Transfer</button>
+      <div id="checkResult" class="check-result"></div>
+    </div>
+  </div>
+
+  <!-- COUPON DISTRIBUTION -->
+  <div id="sec-coupons" class="section">
+    <div class="section-title">Coupon Distribution</div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="form-row single">
+        <div class="form-group"><label>Select Bond</label>
+          <select id="couponBondSelect" onchange="loadCouponInfo()"><option value="">— Select a bond —</option></select>
+        </div>
+      </div>
+    </div>
+    <div id="couponInfo" style="display:none">
+      <div class="stats-row" style="grid-template-columns:repeat(3,1fr)">
+        <div class="stat-card"><div class="stat-label">Coupon Rate</div><div class="stat-value" id="couponRate">—</div></div>
+        <div class="stat-card"><div class="stat-label">Monthly Coupon (est.)</div><div class="stat-value" id="monthlyCoupon">—</div></div>
+        <div class="stat-card"><div class="stat-label">Your IDRP Balance</div><div class="stat-value" id="couponIDRPBal">—</div></div>
+      </div>
+      <div class="panel" style="margin-top:16px">
+        <div class="form-row">
+          <div class="form-group"><label>Total IDRP to Distribute</label><input id="couponAmount" type="number" min="1" oninput="updateCouponPreview()"></div>
+        </div>
+        <div id="couponHolderPreview" style="margin-bottom:16px"></div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-outline" onclick="approveCoupon()">Approve IDRP</button>
+          <button class="btn btn-gold" onclick="distributeCoupon()">Distribute Coupon</button>
+        </div>
+        <div class="tx-status" id="couponStatus"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- IDRP TOKEN -->
+  <div id="sec-idrp" class="section">
+    <div class="section-title">IDRP Token</div>
+    <div class="stats-row" style="grid-template-columns:repeat(3,1fr)">
+      <div class="stat-card"><div class="stat-label">Total Supply</div><div class="stat-value" id="idrpSupply">—</div></div>
+      <div class="stat-card"><div class="stat-label">Your Balance</div><div class="stat-value" id="idrpBalance">—</div></div>
+      <div class="stat-card"><div class="stat-label">Faucet</div><div class="stat-value" id="idrpFaucet">—</div></div>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-title">Mint IDRP</div>
+      <div class="form-row">
+        <div class="form-group"><label>Recipient Address</label><input id="mintAddr" type="text" placeholder="0x..."></div>
+        <div class="form-group"><label>Amount (IDRP base units)</label><input id="mintAmount" type="number" min="1"></div>
+      </div>
+      <button class="btn btn-primary" onclick="mintIDRP()">Mint</button>
+      <div class="tx-status" id="mintStatus"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Grant MINTER_ROLE</div>
+      <div class="form-row single">
+        <div class="form-group"><label>Vault Address</label><input id="grantMinterAddr" type="text" placeholder="0x..."></div>
+      </div>
+      <button class="btn btn-primary" onclick="grantMinter()">Grant MINTER_ROLE</button>
+      <div class="tx-status" id="grantMinterStatus"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Faucet Control</div>
+      <button class="btn btn-danger" id="disableFaucetBtn" onclick="disableFaucet()" style="display:none">Disable Faucet</button>
+      <span id="faucetDisabledMsg" style="display:none;font-size:13px;color:var(--text-muted)">Faucet is disabled.</span>
+    </div>
+  </div>
+
+  <!-- SETTINGS -->
+  <div id="sec-settings" class="section">
+    <div class="section-title">Settings</div>
+    <div class="panel">
+      <div class="panel-title">Contract Addresses</div>
+      <div id="contractAddresses"><div class="empty">Loading...</div></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Network</div>
+      <div id="networkInfo" style="font-size:13px;line-height:2"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const ARBISCAN = "https://sepolia.arbiscan.io";
+let provider, signer, walletAddress, DEPLOYMENTS;
+let contracts = {};
+let isAuthorized = false;
+let allBonds = [];
+let selectedHolderBond = null;
+let selectedCouponBond = null;
+
+const FACTORY_ABI = [
+  "function getAllBonds() view returns (tuple(address bondToken,address vault,string name,string symbol,uint256 faceValueIDRP,uint256 couponRate,uint256 maturityDate,uint256 maxSupply,uint256 deployedAt,address deployer)[])",
+  "function getBondsCount() view returns (uint256)",
+  "function hasRole(bytes32,address) view returns (bool)"
+];
+const BOND_ABI = [
+  "function name() view returns (string)",
+  "function symbol() view returns (string)",
+  "function totalSupply() view returns (uint256)",
+  "function maxSupply() view returns (uint256)",
+  "function maturityDate() view returns (uint256)",
+  "function couponRate() view returns (uint256)",
+  "function faceValueIDRP() view returns (uint256)",
+  "function frozen(address) view returns (bool)",
+  "function redeemable() view returns (bool)",
+  "function paused() view returns (bool)",
+  "function freeze(address,bool)",
+  "function forcedTransfer(address,address,uint256) returns (bool)",
+  "function hasRole(bytes32,address) view returns (bool)"
+];
+const VAULT_ABI = [
+  "function getHolders() view returns (address[])",
+  "function hasPendingDeposit(address) view returns (bool)",
+  "function hasPendingRedeem(address) view returns (bool)",
+  "function couponsReceived(address) view returns (uint256)",
+  "function bondPrice() view returns (uint256)",
+  "function fulfillDeposits(address[])",
+  "function fulfillRedemptions(address[])",
+  "function distributeCoupon(uint256)",
+  "function setBondPrice(uint256)"
+];
+const REGISTRY_ABI = [
+  "function isVerified(address) view returns (bool)",
+  "function investorCountry(address) view returns (string)",
+  "function verifiedAt(address) view returns (uint256)",
+  "function registerInvestor(address,string)",
+  "function batchRegister(address[],string[])",
+  "event InvestorRegistered(address indexed investor, string country)"
+];
+const IDRP_ABI = [
+  "function balanceOf(address) view returns (uint256)",
+  "function totalSupply() view returns (uint256)",
+  "function approve(address,uint256)",
+  "function mint(address,uint256)",
+  "function grantRole(bytes32,address)",
+  "function testnetFaucetEnabled() view returns (bool)",
+  "function disableFaucet()",
+  "function hasRole(bytes32,address) view returns (bool)"
+];
+const COMPLIANCE_ABI = [
+  "function maxHoldingBps() view returns (uint256)",
+  "function setMaxHoldingBps(uint256)",
+  "function blockedCountries(bytes2) view returns (bool)",
+  "function blockCountry(bytes2,bool)",
+  "function canTransfer(address,address,uint256) view returns (bool)"
+];
+
+const DEFAULT_ADMIN_ROLE = ethers.ZeroHash;
+const AGENT_ROLE = ethers.keccak256(ethers.toUtf8Bytes("AGENT_ROLE"));
+const ISSUER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("ISSUER_ROLE"));
+const MINTER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("MINTER_ROLE"));
+
+const COUNTRY_CODES = ["AD","AE","AF","AG","AL","AM","AO","AR","AT","AU","AZ","BA","BB","BD","BE","BF","BG","BH","BI","BJ","BN","BO","BR","BS","BT","BW","BY","BZ","CA","CD","CF","CG","CH","CI","CL","CM","CN","CO","CR","CU","CV","CY","CZ","DE","DJ","DK","DM","DO","DZ","EC","EE","EG","ER","ES","ET","FI","FJ","FM","FR","GA","GB","GD","GE","GH","GM","GN","GQ","GR","GT","GW","GY","HN","HR","HT","HU","ID","IE","IL","IN","IQ","IR","IS","IT","JM","JO","JP","KE","KG","KH","KI","KM","KN","KP","KR","KW","KZ","LA","LB","LC","LI","LK","LR","LS","LT","LU","LV","LY","MA","MC","MD","ME","MG","MH","MK","ML","MM","MN","MR","MT","MU","MV","MW","MX","MY","MZ","NA","NE","NG","NI","NL","NO","NP","NR","NZ","OM","PA","PE","PG","PH","PK","PL","PT","PW","PY","QA","RO","RS","RU","RW","SA","SB","SC","SD","SE","SG","SI","SK","SL","SM","SN","SO","SR","SS","ST","SV","SY","SZ","TD","TG","TH","TJ","TL","TM","TN","TO","TR","TT","TV","TZ","UA","UG","US","UY","UZ","VA","VC","VE","VN","VU","WS","YE","ZA","ZM","ZW"];
+
+function fmtIDRP(val) {
+  const n = Number(val);
+  return "Rp " + (n / 100).toLocaleString("id-ID", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function fmtAddr(addr) {
+  return addr.slice(0, 6) + "..." + addr.slice(-4);
+}
+function addrLink(addr) {
+  return `<a class="link" href="${ARBISCAN}/address/${addr}" target="_blank">${fmtAddr(addr)}</a>
+  <button class="copy-btn" onclick="navigator.clipboard.writeText('${addr}')" title="Copy">⧉</button>`;
+}
+function txLink(hash) {
+  return `<a class="link" href="${ARBISCAN}/tx/${hash}" target="_blank">${hash.slice(0,10)}...</a>`;
+}
+function showToast(msg, type = "success") {
+  const c = document.getElementById("toastContainer");
+  const t = document.createElement("div");
+  t.className = `toast toast-${type}`;
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => t.remove(), 5000);
+}
+function setStatus(id, msg, type = "") {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.innerHTML = msg;
+  el.style.color = type === "error" ? "var(--danger)" : type === "success" ? "var(--success)" : "var(--text-muted)";
+}
+function showSection(name) {
+  document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
+  document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
+  document.getElementById("sec-" + name).classList.add("active");
+  event.target.classList.add("active");
+  if (name === "overview") loadOverview();
+  if (name === "bonds") loadBondsTable();
+  if (name === "compliance") loadCompliance();
+  if (name === "idrp") loadIDRP();
+  if (name === "settings") loadSettings();
+}
+function switchTab(section, tab) {
+  document.querySelectorAll(`#sec-${section} .tab`).forEach(t => t.classList.remove("active"));
+  document.querySelectorAll(`#sec-${section} .tab-content`).forEach(t => t.classList.remove("active"));
+  event.target.classList.add("active");
+  document.getElementById(`${section}-tab-${tab}`).classList.add("active");
+}
+</script>
+
+<script>
+async function connectWallet() {
+  if (!window.ethereum) { alert("MetaMask not found"); return; }
+  provider = new ethers.BrowserProvider(window.ethereum);
+  await provider.send("eth_requestAccounts", []);
+  signer = await provider.getSigner();
+  walletAddress = await signer.getAddress();
+  window.ethereum.on("accountsChanged", () => location.reload());
+  window.ethereum.on("chainChanged", () => location.reload());
+
+  document.getElementById("connectBtn").style.display = "none";
+  document.getElementById("walletInfo").style.display = "block";
+  document.getElementById("walletAddrDisplay").textContent = fmtAddr(walletAddress);
+
+  if (DEPLOYMENTS) {
+    contracts.factory = new ethers.Contract(DEPLOYMENTS.BondFactory, FACTORY_ABI, signer);
+    contracts.registry = new ethers.Contract(DEPLOYMENTS.IdentityRegistry, REGISTRY_ABI, signer);
+    contracts.compliance = new ethers.Contract(DEPLOYMENTS.ComplianceModule, COMPLIANCE_ABI, signer);
+    contracts.idrp = new ethers.Contract(DEPLOYMENTS.IDRPToken, IDRP_ABI, signer);
+  }
+
+  await checkRoles();
+  await loadBondSelects();
+  loadOverview();
+}
+
+async function checkRoles() {
+  if (!contracts.factory || !contracts.idrp) return;
+  const badges = [];
+  try {
+    const isAdmin = await contracts.idrp.hasRole(DEFAULT_ADMIN_ROLE, walletAddress);
+    const isIssuer = await contracts.factory.hasRole(ISSUER_ROLE, walletAddress);
+    if (isAdmin) { badges.push('<span class="rbadge rbadge-admin">Admin</span>'); isAuthorized = true; }
+    if (isIssuer) { badges.push('<span class="rbadge rbadge-issuer">Issuer</span>'); isAuthorized = true; }
+    // Check AGENT_ROLE on any bond
+    allBonds = await contracts.factory.getAllBonds();
+    for (const b of allBonds) {
+      const bt = new ethers.Contract(b.bondToken, BOND_ABI, signer);
+      const isAgent = await bt.hasRole(AGENT_ROLE, walletAddress);
+      if (isAgent) { badges.push('<span class="rbadge rbadge-agent">Agent</span>'); isAuthorized = true; break; }
+    }
+  } catch(e) {}
+  document.getElementById("roleBadgesDisplay").innerHTML = badges.join(" ");
+  if (!isAuthorized) document.getElementById("readonlyBanner").style.display = "block";
+}
+
+async function loadBondSelects() {
+  if (!contracts.factory) return;
+  try {
+    allBonds = await contracts.factory.getAllBonds();
+    const opts = allBonds.map((b, i) => `<option value="${i}">${b.symbol} — ${b.name}</option>`).join("");
+    document.getElementById("holderBondSelect").innerHTML = '<option value="">— Select a bond —</option>' + opts;
+    document.getElementById("couponBondSelect").innerHTML = '<option value="">— Select a bond —</option>' + opts;
+  } catch(e) {}
+}
+
+async function loadOverview() {
+  if (!contracts.factory) return;
+  try {
+    const count = await contracts.factory.getBondsCount();
+    document.getElementById("statBonds").textContent = count.toString();
+
+    let totalUnits = 0n;
+    for (const b of allBonds) {
+      const bt = new ethers.Contract(b.bondToken, BOND_ABI, provider);
+      totalUnits += await bt.totalSupply();
+    }
+    document.getElementById("statUnits").textContent = totalUnits.toLocaleString();
+
+    const idrpSupply = await contracts.idrp.totalSupply();
+    document.getElementById("statIDRP").textContent = fmtIDRP(idrpSupply);
+
+    // Count investors from events (last 50000 blocks)
+    const block = await provider.getBlockNumber();
+    const fromBlock = Math.max(0, block - 50000);
+    const filter = contracts.registry.filters.InvestorRegistered();
+    const logs = await contracts.registry.queryFilter(filter, fromBlock, block);
+    const unique = new Set(logs.map(l => l.args.investor));
+    document.getElementById("statInvestors").textContent = unique.size.toString();
+
+    // Recent activity
+    const rows = logs.slice(-10).reverse().map(l => `<tr>
+      <td>InvestorRegistered</td>
+      <td>${addrLink(l.args.investor)}</td>
+      <td>${l.args.country}</td>
+      <td>${txLink(l.transactionHash)}</td>
+    </tr>`).join("");
+    document.getElementById("activityTable").innerHTML = rows
+      ? `<table><thead><tr><th>Event</th><th>Address</th><th>Detail</th><th>Tx</th></tr></thead><tbody>${rows}</tbody></table>`
+      : '<div class="empty">No recent activity found</div>';
+  } catch(e) {
+    console.error(e);
+  }
+}
+
+async function loadBondsTable() {
+  if (!contracts.factory) { document.getElementById("bondsTable").innerHTML = '<div class="empty">Connect wallet</div>'; return; }
+  try {
+    const bonds = await contracts.factory.getAllBonds();
+    if (!bonds.length) { document.getElementById("bondsTable").innerHTML = '<div class="empty">No bonds deployed</div>'; return; }
+    const now = Math.floor(Date.now() / 1000);
+    let rows = "";
+    for (const b of bonds) {
+      const bt = new ethers.Contract(b.bondToken, BOND_ABI, provider);
+      const [supply, paused] = await Promise.all([bt.totalSupply(), bt.paused()]);
+      const maturity = Number(b.maturityDate);
+      const pct = b.maxSupply > 0n ? Number(supply * 100n / b.maxSupply) : 0;
+      const status = paused ? "Paused" : now >= maturity ? "Matured" : "Active";
+      const statusClass = paused ? "badge-paused" : now >= maturity ? "badge-matured" : "badge-active";
+      rows += `<tr>
+        <td>${b.name}</td><td><strong>${b.symbol}</strong></td>
+        <td style="font-family:'IBM Plex Mono',monospace">${fmtIDRP(b.faceValueIDRP)}</td>
+        <td>${(Number(b.couponRate)/100).toFixed(2)}%</td>
+        <td>${new Date(maturity*1000).toLocaleDateString("id-ID")}</td>
+        <td style="font-family:'IBM Plex Mono',monospace">${Number(b.maxSupply).toLocaleString()}</td>
+        <td style="font-family:'IBM Plex Mono',monospace">${Number(supply).toLocaleString()}</td>
+        <td><div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div><span style="font-size:11px;color:var(--text-muted)">${pct}%</span></td>
+        <td><span class="badge ${statusClass}">${status}</span></td>
+        <td>${addrLink(b.bondToken)} ${addrLink(b.vault)}</td>
+      </tr>`;
+    }
+    document.getElementById("bondsTable").innerHTML = `<table><thead><tr>
+      <th>Name</th><th>Symbol</th><th>Face Value</th><th>Coupon</th><th>Maturity</th>
+      <th>Max Supply</th><th>Outstanding</th><th>% Filled</th><th>Status</th><th>Contracts</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+  } catch(e) { document.getElementById("bondsTable").innerHTML = `<div class="empty">Error: ${e.message}</div>`; }
+}
+</script>
+
+<script>
+async function connectWallet() {
+  if (!window.ethereum) { alert("MetaMask not found"); return; }
+  provider = new ethers.BrowserProvider(window.ethereum);
+  await provider.send("eth_requestAccounts", []);
+  signer = await provider.getSigner();
+  walletAddress = await signer.getAddress();
+  window.ethereum.on("accountsChanged", () => location.reload());
+  window.ethereum.on("chainChanged", () => location.reload());
+  document.getElementById("connectBtn").style.display = "none";
+  document.getElementById("walletInfo").style.display = "block";
+  document.getElementById("walletAddrDisplay").textContent = fmtAddr(walletAddress);
+  if (DEPLOYMENTS) {
+    contracts.factory  = new ethers.Contract(DEPLOYMENTS.BondFactory,       FACTORY_ABI,    signer);
+    contracts.registry = new ethers.Contract(DEPLOYMENTS.IdentityRegistry,  REGISTRY_ABI,   signer);
+    contracts.compliance = new ethers.Contract(DEPLOYMENTS.ComplianceModule, COMPLIANCE_ABI, signer);
+    contracts.idrp     = new ethers.Contract(DEPLOYMENTS.IDRPToken,          IDRP_ABI,       signer);
+  }
+  await checkRoles();
+  await loadBondSelects();
+  loadOverview();
+}
+
+async function checkRoles() {
+  if (!contracts.factory || !contracts.idrp) return;
+  const badges = [];
+  try {
+    if (await contracts.idrp.hasRole(DEFAULT_ADMIN_ROLE, walletAddress))    { badges.push('<span class="rbadge rbadge-admin">Admin</span>');  isAuthorized = true; }
+    if (await contracts.factory.hasRole(ISSUER_ROLE, walletAddress))        { badges.push('<span class="rbadge rbadge-issuer">Issuer</span>'); isAuthorized = true; }
+    allBonds = await contracts.factory.getAllBonds();
+    for (const b of allBonds) {
+      const bt = new ethers.Contract(b.bondToken, BOND_ABI, signer);
+      if (await bt.hasRole(AGENT_ROLE, walletAddress)) { badges.push('<span class="rbadge rbadge-agent">Agent</span>'); isAuthorized = true; break; }
+    }
+  } catch(e) {}
+  document.getElementById("roleBadgesDisplay").innerHTML = badges.join(" ");
+  if (!isAuthorized) document.getElementById("readonlyBanner").style.display = "block";
+}
+
+async function loadBondSelects() {
+  if (!contracts.factory) return;
+  try {
+    allBonds = await contracts.factory.getAllBonds();
+    const opts = allBonds.map((b,i) => `<option value="${i}">${b.symbol} — ${b.name}</option>`).join("");
+    ["holderBondSelect","couponBondSelect"].forEach(id => {
+      document.getElementById(id).innerHTML = '<option value="">— Select a bond —</option>' + opts;
+    });
+  } catch(e) {}
+}
+
+async function loadOverview() {
+  if (!contracts.factory) return;
+  try {
+    document.getElementById("statBonds").textContent = (await contracts.factory.getBondsCount()).toString();
+    let totalUnits = 0n;
+    for (const b of allBonds) {
+      const bt = new ethers.Contract(b.bondToken, BOND_ABI, provider);
+      totalUnits += await bt.totalSupply();
+    }
+    document.getElementById("statUnits").textContent = totalUnits.toLocaleString();
+    document.getElementById("statIDRP").textContent = fmtIDRP(await contracts.idrp.totalSupply());
+    const block = await provider.getBlockNumber();
+    const logs = await contracts.registry.queryFilter(contracts.registry.filters.InvestorRegistered(), Math.max(0, block - 50000), block);
+    document.getElementById("statInvestors").textContent = new Set(logs.map(l => l.args.investor)).size;
+    const rows = logs.slice(-10).reverse().map(l =>
+      `<tr><td>InvestorRegistered</td><td>${addrLink(l.args.investor)}</td><td>${l.args.country}</td><td><a class="link" href="${ARBISCAN}/tx/${l.transactionHash}" target="_blank">${l.transactionHash.slice(0,10)}…</a></td></tr>`
+    ).join("");
+    document.getElementById("activityTable").innerHTML = rows
+      ? `<table><thead><tr><th>Event</th><th>Address</th><th>Detail</th><th>Tx</th></tr></thead><tbody>${rows}</tbody></table>`
+      : '<div class="empty">No recent activity</div>';
+  } catch(e) { console.error(e); }
+}
+
+async function loadBondsTable() {
+  const el = document.getElementById("bondsTable");
+  if (!contracts.factory) { el.innerHTML = '<div class="empty">Connect wallet</div>'; return; }
+  try {
+    if (!allBonds.length) allBonds = await contracts.factory.getAllBonds();
+    if (!allBonds.length) { el.innerHTML = '<div class="empty">No bonds deployed</div>'; return; }
+    const now = Math.floor(Date.now() / 1000);
+    let rows = "";
+    for (const b of allBonds) {
+      const bt = new ethers.Contract(b.bondToken, BOND_ABI, provider);
+      const [supply, paused] = await Promise.all([bt.totalSupply(), bt.paused()]);
+      const pct = b.maxSupply > 0n ? Number(supply * 100n / b.maxSupply) : 0;
+      const maturity = Number(b.maturityDate);
+      const status = paused ? "Paused" : now >= maturity ? "Matured" : "Active";
+      const cls = paused ? "badge-paused" : now >= maturity ? "badge-matured" : "badge-active";
+      rows += `<tr>
+        <td>${b.name}</td><td><b>${b.symbol}</b></td>
+        <td class="addr">${fmtIDRP(b.faceValueIDRP)}</td>
+        <td>${(Number(b.couponRate)/100).toFixed(2)}%</td>
+        <td>${new Date(maturity*1000).toLocaleDateString("id-ID")}</td>
+        <td class="addr">${Number(b.maxSupply).toLocaleString()}</td>
+        <td class="addr">${Number(supply).toLocaleString()}</td>
+        <td><div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div> <span style="font-size:11px;color:var(--text-muted)">${pct}%</span></td>
+        <td><span class="badge ${cls}">${status}</span></td>
+        <td>${addrLink(b.bondToken)}&nbsp;${addrLink(b.vault)}</td>
+      </tr>`;
+    }
+    el.innerHTML = `<table><thead><tr><th>Name</th><th>Symbol</th><th>Face Value</th><th>Coupon</th><th>Maturity</th><th>Max Supply</th><th>Outstanding</th><th>% Filled</th><th>Status</th><th>Contracts</th></tr></thead><tbody>${rows}</tbody></table>`;
+  } catch(e) { el.innerHTML = `<div class="empty">Error: ${e.message}</div>`; }
+}
+</script>
+
+<script>
+async function loadHolders() {
+  const idx = document.getElementById("holderBondSelect").value;
+  const el = document.getElementById("holdersTable");
+  if (!idx) { el.innerHTML = '<div class="empty">Select a bond</div>'; return; }
+  selectedHolderBond = allBonds[idx];
+  const bt = new ethers.Contract(selectedHolderBond.bondToken, BOND_ABI, provider);
+  const vault = new ethers.Contract(selectedHolderBond.vault, VAULT_ABI, provider);
+  try {
+    const holders = await vault.getHolders();
+    if (!holders.length) { el.innerHTML = '<div class="empty">No holders</div>'; return; }
+    let rows = "";
+    for (const h of holders) {
+      const [bal, frozen, verified, country, pendingDep, pendingRed, coupons] = await Promise.all([
+        bt.balanceOf(h), bt.frozen(h), contracts.registry.isVerified(h),
+        contracts.registry.investorCountry(h), vault.hasPendingDeposit(h),
+        vault.hasPendingRedeem(h), vault.couponsReceived(h)
+      ]);
+      rows += `<tr>
+        <td><input type="checkbox" class="holder-check" data-addr="${h}"></td>
+        <td>${addrLink(h)}</td>
+        <td><span class="badge ${verified ? 'badge-yes' : 'badge-no'}">${verified ? 'Yes' : 'No'}</span></td>
+        <td>${country || '—'}</td>
+        <td class="addr">${Number(bal).toLocaleString()}</td>
+        <td>${pendingDep ? '✓' : '—'}</td>
+        <td>${pendingRed ? '✓' : '—'}</td>
+        <td class="addr">${fmtIDRP(coupons)}</td>
+        <td><span class="badge ${frozen ? 'badge-frozen' : 'badge-yes'}">${frozen ? 'Frozen' : 'Active'}</span></td>
+        <td>
+          <button class="btn btn-sm btn-outline" onclick="toggleFreeze('${h}',${frozen})">${frozen ? 'Unfreeze' : 'Freeze'}</button>
+          <button class="btn btn-sm btn-outline" onclick="openForceTransfer('${h}')">Force Transfer</button>
+        </td>
+      </tr>`;
+    }
+    el.innerHTML = `<table><thead><tr><th><input type="checkbox" onclick="document.querySelectorAll('.holder-check').forEach(c=>c.checked=this.checked)"></th><th>Wallet</th><th>KYC</th><th>Country</th><th>Holdings</th><th>Pending Deposit</th><th>Pending Redeem</th><th>Coupons Received</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table>`;
+    document.getElementById("holdersBulkBar").style.display = "flex";
+  } catch(e) { el.innerHTML = `<div class="empty">Error: ${e.message}</div>`; }
+}
+
+async function toggleFreeze(addr, isFrozen) {
+  if (!selectedHolderBond) return;
+  const bt = new ethers.Contract(selectedHolderBond.bondToken, BOND_ABI, signer);
+  try {
+    const tx = await bt.freeze(addr, !isFrozen);
+    showToast(`Freeze tx: ${tx.hash.slice(0,10)}...`);
+    await tx.wait();
+    showToast(`${isFrozen ? 'Unfroze' : 'Froze'} ${fmtAddr(addr)}`);
+    loadHolders();
+  } catch(e) { showToast(e.reason || e.message, "error"); }
+}
+
+function openForceTransfer(from) {
+  document.getElementById("ftFrom").value = from;
+  document.getElementById("ftModal").style.display = "flex";
+}
+
+async function doForceTransfer() {
+  const from = document.getElementById("ftFrom").value;
+  const to = document.getElementById("ftTo").value;
+  const amt = document.getElementById("ftAmount").value;
+  if (!from || !to || !amt || !selectedHolderBond) return;
+  const bt = new ethers.Contract(selectedHolderBond.bondToken, BOND_ABI, signer);
+  try {
+    setStatus("ftStatus", "Submitting...");
+    const tx = await bt.forcedTransfer(from, to, BigInt(amt));
+    setStatus("ftStatus", `Tx: ${txLink(tx.hash)}`);
+    await tx.wait();
+    setStatus("ftStatus", "Success", "success");
+    showToast("Force transfer complete");
+    setTimeout(() => { document.getElementById("ftModal").style.display = "none"; loadHolders(); }, 2000);
+  } catch(e) { setStatus("ftStatus", e.reason || e.message, "error"); }
+}
+
+async function fulfillSelected(type) {
+  const checked = Array.from(document.querySelectorAll(".holder-check:checked")).map(c => c.dataset.addr);
+  if (!checked.length || !selectedHolderBond) return;
+  const vault = new ethers.Contract(selectedHolderBond.vault, VAULT_ABI, signer);
+  try {
+    const tx = type === "deposit" ? await vault.fulfillDeposits(checked) : await vault.fulfillRedemptions(checked);
+    showToast(`Tx: ${tx.hash.slice(0,10)}...`);
+    await tx.wait();
+    showToast(`Fulfilled ${checked.length} ${type}s`);
+    loadHolders();
+  } catch(e) { showToast(e.reason || e.message, "error"); }
+}
+
+async function registerInvestor() {
+  const addr = document.getElementById("kycAddr").value;
+  const country = document.getElementById("kycCountry").value;
+  if (!addr || !country) return;
+  try {
+    setStatus("kycRegStatus", "Submitting...");
+    const tx = await contracts.registry.registerInvestor(addr, country);
+    setStatus("kycRegStatus", `Tx: ${txLink(tx.hash)}`);
+    await tx.wait();
+    setStatus("kycRegStatus", "Registered", "success");
+    showToast(`Registered ${fmtAddr(addr)}`);
+  } catch(e) { setStatus("kycRegStatus", e.reason || e.message, "error"); }
+}
+
+let batchData = [];
+function parseBatch() {
+  const input = document.getElementById("batchInput").value.trim();
+  const lines = input.split("\n").filter(l => l.trim());
+  batchData = [];
+  for (const line of lines) {
+    const [addr, country] = line.split(",").map(s => s.trim());
+    if (ethers.isAddress(addr) && country) batchData.push({ addr, country });
+  }
+  if (!batchData.length) { document.getElementById("batchPreview").innerHTML = '<div class="alert alert-error">No valid entries</div>'; return; }
+  const rows = batchData.map(d => `<tr><td>${fmtAddr(d.addr)}</td><td>${d.country}</td></tr>`).join("");
+  document.getElementById("batchPreview").innerHTML = `<table><thead><tr><th>Address</th><th>Country</th></tr></thead><tbody>${rows}</tbody></table>`;
+  document.getElementById("batchSubmitBtn").disabled = false;
+}
+
+async function submitBatch() {
+  if (!batchData.length) return;
+  const addrs = batchData.map(d => d.addr);
+  const countries = batchData.map(d => d.country);
+  try {
+    setStatus("batchStatus", "Submitting...");
+    const tx = await contracts.registry.batchRegister(addrs, countries);
+    setStatus("batchStatus", `Tx: ${txLink(tx.hash)}`);
+    await tx.wait();
+    setStatus("batchStatus", `Registered ${batchData.length} investors`, "success");
+    showToast(`Batch registered ${batchData.length} investors`);
+  } catch(e) { setStatus("batchStatus", e.reason || e.message, "error"); }
+}
+
+async function loadCompliance() {
+  try {
+    const bps = await contracts.compliance.maxHoldingBps();
+    document.getElementById("currentMaxHolding").textContent = `Current: ${Number(bps)} bps (${(Number(bps)/100).toFixed(2)}%)`;
+    let rows = "";
+    for (const cc of COUNTRY_CODES.slice(0, 30)) {
+      const hex = "0x" + Buffer.from(cc).toString("hex");
+      const blocked = await contracts.compliance.blockedCountries(hex);
+      rows += `<tr><td>${cc}</td><td><span class="badge ${blocked ? 'badge-no' : 'badge-yes'}">${blocked ? 'Blocked' : 'Allowed'}</span></td>
+        <td><button class="btn btn-sm ${blocked ? 'btn-primary' : 'btn-danger'}" onclick="blockCountry('${cc}',${!blocked})">${blocked ? 'Unblock' : 'Block'}</button></td></tr>`;
+    }
+    document.getElementById("countryTable").innerHTML = `<table><thead><tr><th>Country</th><th>Status</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table>`;
+  } catch(e) { console.error(e); }
+}
+
+async function updateMaxHolding() {
+  const bps = document.getElementById("maxHoldingInput").value;
+  if (!bps) return;
+  try {
+    setStatus("maxHoldingStatus", "Submitting...");
+    const tx = await contracts.compliance.setMaxHoldingBps(BigInt(bps));
+    setStatus("maxHoldingStatus", `Tx: ${txLink(tx.hash)}`);
+    await tx.wait();
+    setStatus("maxHoldingStatus", "Updated", "success");
+    showToast("Max holding updated");
+    loadCompliance();
+  } catch(e) { setStatus("maxHoldingStatus", e.reason || e.message, "error"); }
+}
+
+async function blockCountry(cc, block) {
+  const hex = "0x" + Buffer.from(cc).toString("hex");
+  try {
+    const tx = await contracts.compliance.blockCountry(hex, block);
+    showToast(`Tx: ${tx.hash.slice(0,10)}...`);
+    await tx.wait();
+    showToast(`${block ? 'Blocked' : 'Unblocked'} ${cc}`);
+    loadCompliance();
+  } catch(e) { showToast(e.reason || e.message, "error"); }
+}
+
+async function checkTransfer() {
+  const from = document.getElementById("checkFrom").value;
+  const to = document.getElementById("checkTo").value;
+  const amt = document.getElementById("checkAmount").value;
+  if (!from || !to || !amt) return;
+  try {
+    const ok = await contracts.compliance.canTransfer(from, to, BigInt(amt));
+    const el = document.getElementById("checkResult");
+    el.className = ok ? "check-result check-allowed" : "check-result check-blocked";
+    el.textContent = ok ? "✓ Transfer Allowed" : "✗ Transfer Blocked";
+    el.style.display = "block";
+  } catch(e) { showToast(e.message, "error"); }
+}
+</script>
+
+<script>
+async function loadCouponInfo() {
+  const idx = document.getElementById("couponBondSelect").value;
+  if (!idx) { document.getElementById("couponInfo").style.display = "none"; return; }
+  selectedCouponBond = allBonds[idx];
+  const bt = new ethers.Contract(selectedCouponBond.bondToken, BOND_ABI, provider);
+  const vault = new ethers.Contract(selectedCouponBond.vault, VAULT_ABI, provider);
+  try {
+    const [supply, couponRate, faceValue, idrpBal] = await Promise.all([
+      bt.totalSupply(), bt.couponRate(), bt.faceValueIDRP(),
+      contracts.idrp.balanceOf(walletAddress)
+    ]);
+    document.getElementById("couponRate").textContent = (Number(couponRate)/100).toFixed(2) + "%";
+    const monthly = supply * faceValue * couponRate / 10000n / 12n;
+    document.getElementById("monthlyCoupon").textContent = fmtIDRP(monthly);
+    document.getElementById("couponIDRPBal").textContent = fmtIDRP(idrpBal);
+    document.getElementById("couponAmount").value = monthly.toString();
+    document.getElementById("couponInfo").style.display = "block";
+    updateCouponPreview();
+  } catch(e) { console.error(e); }
+}
+
+async function updateCouponPreview() {
+  if (!selectedCouponBond) return;
+  const pool = BigInt(document.getElementById("couponAmount").value || "0");
+  if (!pool) return;
+  const bt = new ethers.Contract(selectedCouponBond.bondToken, BOND_ABI, provider);
+  const vault = new ethers.Contract(selectedCouponBond.vault, VAULT_ABI, provider);
+  try {
+    const [holders, supply] = await Promise.all([vault.getHolders(), bt.totalSupply()]);
+    if (!supply) return;
+    let rows = "";
+    for (const h of holders) {
+      const bal = await bt.balanceOf(h);
+      const est = pool * bal / supply;
+      rows += `<tr><td>${addrLink(h)}</td><td class="addr">${Number(bal).toLocaleString()}</td><td class="addr">${fmtIDRP(est)}</td></tr>`;
+    }
+    document.getElementById("couponHolderPreview").innerHTML = rows
+      ? `<table><thead><tr><th>Holder</th><th>Holdings</th><th>Est. Payout</th></tr></thead><tbody>${rows}</tbody></table>`
+      : "";
+  } catch(e) {}
+}
+
+async function approveCoupon() {
+  const amt = document.getElementById("couponAmount").value;
+  if (!amt || !selectedCouponBond) return;
+  try {
+    setStatus("couponStatus", "Approving...");
+    const tx = await contracts.idrp.approve(selectedCouponBond.vault, BigInt(amt));
+    setStatus("couponStatus", `Tx: ${txLink(tx.hash)}`);
+    await tx.wait();
+    setStatus("couponStatus", "Approved", "success");
+    showToast("IDRP approved");
+  } catch(e) { setStatus("couponStatus", e.reason || e.message, "error"); }
+}
+
+async function distributeCoupon() {
+  const amt = document.getElementById("couponAmount").value;
+  if (!amt || !selectedCouponBond) return;
+  const vault = new ethers.Contract(selectedCouponBond.vault, VAULT_ABI, signer);
+  try {
+    setStatus("couponStatus", "Distributing...");
+    const tx = await vault.distributeCoupon(BigInt(amt));
+    setStatus("couponStatus", `Tx: ${txLink(tx.hash)}`);
+    await tx.wait();
+    setStatus("couponStatus", "Distributed", "success");
+    showToast("Coupon distributed");
+  } catch(e) { setStatus("couponStatus", e.reason || e.message, "error"); }
+}
+
+async function loadIDRP() {
+  if (!contracts.idrp) return;
+  try {
+    const [supply, bal, faucetOn] = await Promise.all([
+      contracts.idrp.totalSupply(), contracts.idrp.balanceOf(walletAddress),
+      contracts.idrp.testnetFaucetEnabled()
+    ]);
+    document.getElementById("idrpSupply").textContent = fmtIDRP(supply);
+    document.getElementById("idrpBalance").textContent = fmtIDRP(bal);
+    document.getElementById("idrpFaucet").textContent = faucetOn ? "Enabled" : "Disabled";
+    document.getElementById("disableFaucetBtn").style.display = faucetOn ? "inline-block" : "none";
+    document.getElementById("faucetDisabledMsg").style.display = faucetOn ? "none" : "inline";
+  } catch(e) {}
+}
+
+async function mintIDRP() {
+  const addr = document.getElementById("mintAddr").value;
+  const amt = document.getElementById("mintAmount").value;
+  if (!addr || !amt) return;
+  try {
+    setStatus("mintStatus", "Submitting...");
+    const tx = await contracts.idrp.mint(addr, BigInt(amt));
+    setStatus("mintStatus", `Tx: ${txLink(tx.hash)}`);
+    await tx.wait();
+    setStatus("mintStatus", "Minted", "success");
+    showToast("IDRP minted");
+    loadIDRP();
+  } catch(e) { setStatus("mintStatus", e.reason || e.message, "error"); }
+}
+
+async function grantMinter() {
+  const addr = document.getElementById("grantMinterAddr").value;
+  if (!addr) return;
+  try {
+    setStatus("grantMinterStatus", "Submitting...");
+    const tx = await contracts.idrp.grantRole(MINTER_ROLE, addr);
+    setStatus("grantMinterStatus", `Tx: ${txLink(tx.hash)}`);
+    await tx.wait();
+    setStatus("grantMinterStatus", "Role granted", "success");
+    showToast("MINTER_ROLE granted");
+  } catch(e) { setStatus("grantMinterStatus", e.reason || e.message, "error"); }
+}
+
+async function disableFaucet() {
+  try {
+    const tx = await contracts.idrp.disableFaucet();
+    showToast(`Tx: ${tx.hash.slice(0,10)}...`);
+    await tx.wait();
+    showToast("Faucet disabled");
+    loadIDRP();
+  } catch(e) { showToast(e.reason || e.message, "error"); }
+}
+
+function loadSettings() {
+  if (!DEPLOYMENTS) return;
+  const entries = ["IDRPToken","IdentityRegistry","ComplianceModule","GovBondToken","GovBondVault","BondFactory"];
+  const rows = entries.filter(k => DEPLOYMENTS[k]).map(k =>
+    `<tr><td style="font-weight:600">${k}</td><td>${addrLink(DEPLOYMENTS[k])}</td><td><a class="link" href="${ARBISCAN}/address/${DEPLOYMENTS[k]}" target="_blank">View ↗</a></td></tr>`
+  ).join("");
+  document.getElementById("contractAddresses").innerHTML =
+    `<table><thead><tr><th>Contract</th><th>Address</th><th>Explorer</th></tr></thead><tbody>${rows}</tbody></table>`;
+  document.getElementById("networkInfo").innerHTML =
+    `<div>Network: <b>Arbitrum Sepolia</b></div><div>Chain ID: <b>421614</b></div><div>RPC: <b>https://sepolia-rollup.arbitrum.io/rpc</b></div><div>Wallet: <b>${walletAddress || '—'}</b></div>`;
+}
+
+async function init() {
+  try {
+    DEPLOYMENTS = await (await fetch("./deployments.json")).json();
+  } catch(e) { console.warn("deployments.json not found"); }
+}
+
+document.addEventListener("DOMContentLoaded", init);
+</script>
+</body>
+</html>
