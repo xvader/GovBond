@@ -21,23 +21,30 @@ contract GovBondToken is ERC20, ERC20Burnable, AccessControl, Pausable {
     IIdentityRegistry public identityRegistry;
     IComplianceModule public complianceModule;
 
-    uint256 public immutable faceValue = 1_000_000;
+    uint256 public immutable faceValueIDRP;
     uint256 public immutable maturityDate;
-    uint256 public immutable couponRate; // basis points
+    uint256 public immutable couponRate;
+    uint256 public maxSupply;
 
     mapping(address => bool) public frozen;
+
+    bool private _forcedTransferActive;
 
     event IdentityRegistryAdded(address indexed registry);
     event ComplianceAdded(address indexed compliance);
     event TokensFrozen(address indexed investor, bool status);
+    event ForcedTransfer(address indexed from, address indexed to, uint256 amount);
 
     constructor(
+        string memory _name,
+        string memory _symbol,
         address _identityRegistry,
         address _complianceModule,
         uint256 _maturityDate,
         uint256 _couponRate,
-        uint256 _initialSupply
-    ) ERC20("Palembang Municipal Bond 2025", "PMB25") {
+        uint256 _maxSupply,
+        uint256 _faceValueIDRP
+    ) ERC20(_name, _symbol) {
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(AGENT_ROLE, msg.sender);
         _grantRole(COMPLIANCE_ROLE, msg.sender);
@@ -46,17 +53,22 @@ contract GovBondToken is ERC20, ERC20Burnable, AccessControl, Pausable {
         complianceModule = IComplianceModule(_complianceModule);
         maturityDate = _maturityDate;
         couponRate = _couponRate;
+        maxSupply = _maxSupply;
+        faceValueIDRP = _faceValueIDRP;
 
         emit IdentityRegistryAdded(_identityRegistry);
         emit ComplianceAdded(_complianceModule);
-
-        if (_initialSupply > 0) _mint(msg.sender, _initialSupply);
     }
 
-    function decimals() public pure override returns (uint8) { return 18; }
+    function decimals() public pure override returns (uint8) { return 0; }
+
+    function redeemable() external view returns (bool) {
+        return block.timestamp >= maturityDate;
+    }
 
     function mint(address to, uint256 amount) external onlyRole(AGENT_ROLE) {
         require(identityRegistry.isVerified(to), "Recipient not verified");
+        require(totalSupply() + amount <= maxSupply, "Cap reached");
         _mint(to, amount);
     }
 
@@ -66,8 +78,15 @@ contract GovBondToken is ERC20, ERC20Burnable, AccessControl, Pausable {
     }
 
     function forcedTransfer(address from, address to, uint256 amount) external onlyRole(AGENT_ROLE) returns (bool) {
+        _forcedTransferActive = true;
         _transfer(from, to, amount);
+        _forcedTransferActive = false;
+        emit ForcedTransfer(from, to, amount);
         return true;
+    }
+
+    function resetForcedFlag() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _forcedTransferActive = false;
     }
 
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) { _pause(); }
@@ -84,6 +103,10 @@ contract GovBondToken is ERC20, ERC20Burnable, AccessControl, Pausable {
     }
 
     function _update(address from, address to, uint256 amount) internal override {
+        if (_forcedTransferActive) {
+            ERC20._update(from, to, amount);
+            return;
+        }
         if (from != address(0) && to != address(0)) {
             require(!paused(), "Token paused");
             require(!frozen[from], "Sender frozen");

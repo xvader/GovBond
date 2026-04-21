@@ -7,11 +7,11 @@ async function main() {
   const [deployer] = await ethers.getSigners();
   console.log("Deploying with:", deployer.address);
 
-  // 1. MockUSDC
-  const MockUSDC = await ethers.getContractFactory("MockUSDC");
-  const usdc = await MockUSDC.deploy();
-  await usdc.waitForDeployment();
-  console.log("MockUSDC:", await usdc.getAddress());
+  // 1. IDRPToken
+  const IDRPToken = await ethers.getContractFactory("IDRPToken");
+  const idrp = await IDRPToken.deploy();
+  await idrp.waitForDeployment();
+  console.log("IDRPToken:", await idrp.getAddress());
 
   // 2. IdentityRegistry
   const IdentityRegistry = await ethers.getContractFactory("IdentityRegistry");
@@ -27,49 +27,56 @@ async function main() {
 
   // 4. GovBondToken
   const maturity = Math.floor(Date.now() / 1000) + 365 * 24 * 3600;
+  const maxSupply = 100_000n;
+  const faceValueIDRP = 100_000_000n; // Rp 1,000,000.00 at 2 decimals
+
   const GovBondToken = await ethers.getContractFactory("GovBondToken");
   const bond = await GovBondToken.deploy(
+    "Palembang Municipal Bond 2025",
+    "PMB25",
     await registry.getAddress(),
     await compliance.getAddress(),
     maturity,
     750,
-    0
+    maxSupply,
+    faceValueIDRP
   );
   await bond.waitForDeployment();
   console.log("GovBondToken:", await bond.getAddress());
 
-  // Wire compliance → bond token
   await compliance.setBondToken(await bond.getAddress());
 
-  // 5. GovBondVault (bondPrice = 1 USDC = 1e6)
+  // 5. GovBondVault
   const GovBondVault = await ethers.getContractFactory("GovBondVault");
   const vault = await GovBondVault.deploy(
     await bond.getAddress(),
-    await usdc.getAddress(),
-    1_000_000n // 1 USDC per bond unit
+    await idrp.getAddress(),
+    faceValueIDRP
   );
   await vault.waitForDeployment();
   console.log("GovBondVault:", await vault.getAddress());
 
-  // 6. Grant AGENT_ROLE to deployer and vault on bond token
+  // 6. Grant roles
   const AGENT_ROLE = ethers.keccak256(ethers.toUtf8Bytes("AGENT_ROLE"));
+  const MINTER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("MINTER_ROLE"));
   await bond.grantRole(AGENT_ROLE, await vault.getAddress());
-  console.log("AGENT_ROLE granted to vault");
+  await idrp.grantRole(MINTER_ROLE, await vault.getAddress());
+  console.log("Roles granted");
 
   // 7. Register deployer as verified investor
   await registry.registerInvestor(deployer.address, "ID");
   console.log("Deployer registered as investor");
 
-  // 8. Mint 1,000,000 USDC to deployer
-  await usdc.mint(deployer.address, 1_000_000n * 1_000_000n); // 1M USDC (6 decimals)
-  console.log("Minted 1,000,000 USDC to deployer");
+  // 8. Mint 10,000,000,000 IDRP (Rp 100,000,000.00) to deployer
+  await idrp.mint(deployer.address, 10_000_000_000n);
+  console.log("Minted 10,000,000,000 IDRP to deployer");
 
-  // 9. Save addresses
+  // 9. Save deployments
   const deployments = {
     network: "arbitrumSepolia",
     chainId: 421614,
     deployer: deployer.address,
-    MockUSDC: await usdc.getAddress(),
+    IDRPToken: await idrp.getAddress(),
     IdentityRegistry: await registry.getAddress(),
     ComplianceModule: await compliance.getAddress(),
     GovBondToken: await bond.getAddress(),
@@ -78,12 +85,12 @@ async function main() {
     deployedAt: new Date().toISOString(),
   };
 
+  const json = JSON.stringify(deployments, null, 2);
   const dir = path.join(__dirname, "../deployments");
   if (!fs.existsSync(dir)) fs.mkdirSync(dir);
-  const json = JSON.stringify(deployments, null, 2);
   fs.writeFileSync(path.join(dir, "arbitrum-sepolia.json"), json);
   fs.writeFileSync(path.join(__dirname, "../frontend/deployments.json"), json);
-  console.log("Saved to deployments/arbitrum-sepolia.json and frontend/deployments.json");
+  console.log("Saved deployments");
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

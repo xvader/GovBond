@@ -9,22 +9,30 @@ import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 interface IGovBondToken {
     function mint(address to, uint256 amount) external;
     function burn(uint256 amount) external;
+    function burnFrom(address from, uint256 amount) external;
     function balanceOf(address account) external view returns (uint256);
     function totalSupply() external view returns (uint256);
+    function maxSupply() external view returns (uint256);
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
     function transfer(address to, uint256 amount) external returns (bool);
     function couponRate() external view returns (uint256);
     function maturityDate() external view returns (uint256);
+    function redeemable() external view returns (bool);
 }
 
 contract GovBondVault is AccessControl {
     using SafeERC20 for IERC20;
     using EnumerableSet for EnumerableSet.AddressSet;
 
+    // IDRP: 2 decimals. 1 bond unit = faceValueIDRP IDRP base units.
+    // Example: faceValue=100_000_000 means Rp 1,000,000.00
+    // deposit(100_000_000, ...) → 1 bond unit minted (0-decimal)
+    // redeem(1, ...) → 100_000_000 IDRP base units returned
+
     bytes32 public constant AGENT_ROLE = keccak256("AGENT_ROLE");
 
     IGovBondToken public immutable bondToken;
-    IERC20 public immutable usdc;
+    IERC20 public immutable idrp;
 
     struct DepositRequest {
         address investor;
@@ -56,28 +64,29 @@ contract GovBondVault is AccessControl {
     mapping(address => uint256) public couponsReceived;
 
     uint256 public bondPrice;
-
-    bool public emergencyWithdrawUSDC;
+    bool public emergencyWithdrawIDRP;
 
     EnumerableSet.AddressSet private _bondholders;
-
 
     event DepositRequest_(uint256 indexed requestId, address indexed controller, address indexed owner, uint256 assets);
     event RedeemRequest_(uint256 indexed requestId, address indexed controller, address indexed owner, uint256 shares);
     event DepositClaimable(uint256 indexed requestId, address indexed controller, uint256 assets);
     event RedeemClaimable(uint256 indexed requestId, address indexed controller, uint256 shares);
     event CouponPaid(address indexed holder, uint256 amount);
+    event CouponDistributed(uint256 totalAmount, uint256 holderCount, uint256 timestamp);
+    event DustReturned(uint256 amount);
     event BondPriceUpdated(uint256 oldPrice, uint256 newPrice);
+    event TokenSwept(address indexed token, address indexed to, uint256 amount);
 
-    constructor(address _bondToken, address _usdc, uint256 _bondPrice) {
+    constructor(address _bondToken, address _idrp, uint256 _bondPrice) {
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(AGENT_ROLE, msg.sender);
         bondToken = IGovBondToken(_bondToken);
-        usdc = IERC20(_usdc);
+        idrp = IERC20(_idrp);
         bondPrice = _bondPrice;
     }
 
-    function updateHolder(address addr) internal {
+    function _trackHolder(address addr) internal {
         if (bondToken.balanceOf(addr) > 0) {
             _bondholders.add(addr);
         } else {
@@ -90,7 +99,7 @@ contract GovBondVault is AccessControl {
     function requestDeposit(uint256 assets, address controller, address owner) external returns (uint256 requestId) {
         require(assets > 0, "Zero assets");
         require(!hasPendingDeposit[controller], "Pending deposit exists");
-        usdc.safeTransferFrom(owner, address(this), assets);
+        idrp.safeTransferFrom(owner, address(this), assets);
         requestId = nextDepositRequestId++;
         depositRequests[requestId] = DepositRequest(controller, assets, block.timestamp, false, false);
         investorDepositRequestId[controller] = requestId;
@@ -116,17 +125,19 @@ contract GovBondVault is AccessControl {
         require(r.investor == controller, "No request");
         require(r.claimable && !r.claimed, "Not claimable");
         require(r.assets == assets, "Amount mismatch");
+        require(assets % bondPrice == 0, "Amount must be a whole number of bonds");
+        shares = assets / bondPrice;
+        require(bondToken.totalSupply() + shares <= bondToken.maxSupply(), "Bond cap reached");
         r.claimed = true;
         hasPendingDeposit[controller] = false;
-        shares = (assets * 1e18) / bondPrice;
         bondToken.mint(receiver, shares);
-        updateHolder(receiver);
+        _trackHolder(receiver);
     }
 
     // ── ERC-7540 Redeem ───────────────────────────────────────────────────────
 
     function requestRedeem(uint256 shares, address controller, address owner) external returns (uint256 requestId) {
-        require(block.timestamp >= bondToken.maturityDate(), "Bond not yet matured");
+        require(bondToken.redeemable(), "Bond not yet matured");
         require(shares > 0, "Zero shares");
         require(!hasPendingRedeem[controller], "Pending redeem exists");
         bondToken.transferFrom(owner, address(this), shares);
@@ -155,12 +166,13 @@ contract GovBondVault is AccessControl {
         require(r.investor == controller, "No request");
         require(r.claimable && !r.claimed, "Not claimable");
         require(r.shares == shares, "Amount mismatch");
+        // checks-effects-interactions
         r.claimed = true;
         hasPendingRedeem[controller] = false;
-        assets = (shares * bondPrice) / 1e18;
-        usdc.safeTransfer(receiver, assets);
+        assets = shares * bondPrice;
         bondToken.burn(shares);
-        updateHolder(controller);
+        idrp.safeTransfer(receiver, assets);
+        _trackHolder(controller);
     }
 
     // ── Admin fulfillment ─────────────────────────────────────────────────────
@@ -195,10 +207,11 @@ contract GovBondVault is AccessControl {
 
     function distributeCoupon(uint256 totalCouponPool) external onlyRole(AGENT_ROLE) {
         require(totalCouponPool > 0, "Zero coupon");
-        usdc.safeTransferFrom(msg.sender, address(this), totalCouponPool);
+        idrp.safeTransferFrom(msg.sender, address(this), totalCouponPool);
         uint256 totalSupply = bondToken.totalSupply();
         require(totalSupply > 0, "No supply");
         uint256 len = _bondholders.length();
+        uint256 totalPaid;
         for (uint256 i = 0; i < len; i++) {
             address holder = _bondholders.at(i);
             uint256 bal = bondToken.balanceOf(holder);
@@ -206,28 +219,28 @@ contract GovBondVault is AccessControl {
             uint256 coupon = (totalCouponPool * bal) / totalSupply;
             if (coupon > 0) {
                 couponsReceived[holder] += coupon;
-                usdc.safeTransfer(holder, coupon);
+                totalPaid += coupon;
+                idrp.safeTransfer(holder, coupon);
                 emit CouponPaid(holder, coupon);
             }
         }
+        uint256 dust = totalCouponPool - totalPaid;
+        if (dust > 0) {
+            idrp.safeTransfer(msg.sender, dust);
+            emit DustReturned(dust);
+        }
+        emit CouponDistributed(totalCouponPool, len, block.timestamp);
     }
 
     function getHolders() external view returns (address[] memory) {
         return _bondholders.values();
     }
 
+    // ── Admin utilities ───────────────────────────────────────────────────────
+
     function setBondPrice(uint256 _price) external onlyRole(DEFAULT_ADMIN_ROLE) {
         emit BondPriceUpdated(bondPrice, _price);
         bondPrice = _price;
-    }
-
-    function withdrawDust(address token, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(token != address(usdc) || emergencyWithdrawUSDC, "Use emergencyWithdrawUSDC flag");
-        IERC20(token).safeTransfer(msg.sender, amount);
-    }
-
-    function setEmergencyWithdrawUSDC(bool enabled) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        emergencyWithdrawUSDC = enabled;
     }
 
     function resetDepositRequest(address investor) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -238,5 +251,15 @@ contract GovBondVault is AccessControl {
     function resetRedeemRequest(address investor) external onlyRole(DEFAULT_ADMIN_ROLE) {
         redeemRequests[investorRedeemRequestId[investor]].claimed = true;
         hasPendingRedeem[investor] = false;
+    }
+
+    function sweepToken(address token, address to, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(token != address(idrp) || emergencyWithdrawIDRP, "Use emergencyWithdrawIDRP flag");
+        IERC20(token).safeTransfer(to, amount);
+        emit TokenSwept(token, to, amount);
+    }
+
+    function setEmergencyWithdrawIDRP(bool enabled) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        emergencyWithdrawIDRP = enabled;
     }
 }

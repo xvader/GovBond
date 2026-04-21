@@ -1,0 +1,962 @@
+# GovBond v2 — kiro-cli Prompt Sequence
+
+> Run these prompts **in order**. Each prompt builds on the previous output.
+> After each prompt, review the diff before continuing.
+> Working branch: `git checkout -b feat/govbond-v2`
+
+---
+
+## PROMPT 1 — IDRP Token + Bug Fixes
+
+```
+You are working on the GovBond Hardhat/Solidity project (Arbitrum Sepolia, chainId 421614).
+Full current codebase is in this repository. Read every file before writing anything.
+
+### TASK: Replace MockUSDC with IDRPToken + fix all critical bugs
+
+─────────────────────────────────────────────────────────────────
+PART A — New contract: contracts/IDRPToken.sol
+─────────────────────────────────────────────────────────────────
+Create contracts/IDRPToken.sol:
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+```
+
+Requirements:
+- Name: "Indonesian Rupiah" · Symbol: "IDRP" · Decimals: 2 (Rupiah has sen subunit)
+- Extends: ERC20, AccessControl, Pausable (all OpenZeppelin v5)
+- Roles: DEFAULT_ADMIN_ROLE, MINTER_ROLE = keccak256("MINTER_ROLE")
+- Functions:
+  - mint(address to, uint256 amount) onlyRole(MINTER_ROLE)
+  - burn(uint256 amount) — public, caller burns own tokens
+  - burnFrom(address from, uint256 amount) — uses allowance, for vault use
+  - pause() / unpause() onlyRole(DEFAULT_ADMIN_ROLE)
+  - _update override: require(!paused()) when from != address(0)
+- Constructor grants DEFAULT_ADMIN_ROLE and MINTER_ROLE to msg.sender
+- No public mint without role (this is NOT a faucet token like MockUSDC)
+- Add a testnet faucet function: faucet(address to) external — mints
+  100_000_000 (Rp 1,000,000.00 at 2 decimals) to any address with no auth,
+  but only when a bool `testnetFaucetEnabled` is true (set in constructor,
+  can be disabled by admin via disableFaucet())
+
+─────────────────────────────────────────────────────────────────
+PART B — Fix contracts/GovBondToken.sol
+─────────────────────────────────────────────────────────────────
+Apply ALL of these fixes:
+
+1. Import ERC20Burnable and add it to the inheritance chain so GovBondToken
+   extends ERC20, ERC20Burnable, AccessControl, Pausable.
+
+2. Override decimals() to return 0 (bond units are whole, not divisible).
+   Each token = 1 bond unit at Rp 1,000,000 face value.
+
+3. Add maturity enforcement: add modifier onlyAfterMaturity() that requires
+   block.timestamp >= maturityDate. Add function redeemable() external view
+   returns (bool) { return block.timestamp >= maturityDate; }
+
+4. Add maximum supply cap:
+   uint256 public maxSupply; // set in constructor
+   In mint(), add: require(totalSupply() + amount <= maxSupply, "Cap reached");
+
+5. Constructor signature change — add maxSupply parameter:
+   constructor(
+     string memory _name,
+     string memory _symbol,
+     address _identityRegistry,
+     address _complianceModule,
+     uint256 _maturityDate,    // unix timestamp
+     uint256 _couponRate,      // basis points
+     uint256 _maxSupply,       // in bond units (18 decimals)
+     uint256 _faceValueIDRP    // face value per unit in IDRP (2 decimals)
+   )
+   Store _faceValueIDRP as immutable uint256 public faceValueIDRP.
+
+6. Keep all existing roles (AGENT_ROLE, COMPLIANCE_ROLE), events, freeze,
+   forcedTransfer, pause, setIdentityRegistry, setComplianceModule.
+
+7. In _update: the compliance check must NOT fire during mint (from == address(0))
+   or burn (to == address(0)). Change the condition to:
+   if (from != address(0) && to != address(0)) { ... compliance checks ... }
+
+─────────────────────────────────────────────────────────────────
+PART C — Fix contracts/GovBondVault.sol
+─────────────────────────────────────────────────────────────────
+Apply ALL of these fixes:
+
+1. Replace all references to USDC / MockUSDC with IDRP (IDRPToken).
+   The settlement asset is now IDRP with 2 decimals.
+
+2. Fix burnFrom bug: in redeem(), after safeTransfer of IDRP to receiver,
+   call bondToken.burnFrom(address(this), shares).
+   (The vault already holds the shares from requestRedeem's transferFrom.)
+
+3. Fix share calculation for 2-decimal IDRP and 0-decimal bond units:
+   - bondPrice is stored in IDRP units (2 decimals), e.g. 100_000_000 = Rp 1,000,000.00
+   - In deposit(): shares = assets / bondPrice  (no scaling needed: both are whole-unit after dividing)
+     Use: shares = assets / bondPrice;
+     Require assets % bondPrice == 0 ("Amount must be a whole number of bonds")
+   - In redeem(): assets = shares * bondPrice;
+
+4. Add maximum deposit cap enforcement:
+   - Read GovBondToken.maxSupply and totalSupply() before minting.
+   - In deposit(): require(bondToken.totalSupply() + shares <= bondToken.maxSupply(), "Bond cap reached");
+     Add maxSupply() view to IGovBondToken interface.
+
+5. Add onchain holder set for safe coupon distribution:
+   - Import OpenZeppelin EnumerableSet, use AddressSet _bondholders.
+   - In deposit() after mint: _trackHolder(receiver);
+   - In redeem() after burn: _trackHolder(receiver); // may remove if balance = 0
+   - Internal _trackHolder(address addr):
+     if (bondToken.balanceOf(addr) > 0) _bondholders.add(addr);
+     else _bondholders.remove(addr);
+   - Change distributeCoupon signature to:
+     function distributeCoupon(uint256 totalCouponPool) external onlyRole(AGENT_ROLE)
+     Iterate _bondholders set internally. No external array parameter.
+   - Add: function getHolders() external view returns (address[] memory)
+   - Emit CouponPaid(address indexed holder, uint256 amount) per payout.
+
+6. Add maturity guard on requestRedeem:
+   Add to IGovBondToken: function redeemable() external view returns (bool);
+   In requestRedeem(): require(bondToken.redeemable(), "Bond not yet matured");
+
+7. Add admin reset functions:
+   function resetDepositRequest(address investor) external onlyRole(DEFAULT_ADMIN_ROLE):
+     hasPendingDeposit[investor] = false;
+     depositRequests[investorDepositRequestId[investor]].claimed = true;
+   Same for resetRedeemRequest.
+
+8. Add dust sweep:
+   function sweepToken(address token, address to, uint256 amount)
+     external onlyRole(DEFAULT_ADMIN_ROLE)
+   Emits TokenSwept(address token, address to, uint256 amount).
+
+9. Replace the CouponDistributed event with:
+   event CouponDistributed(uint256 totalAmount, uint256 holderCount, uint256 timestamp);
+
+─────────────────────────────────────────────────────────────────
+PART D — Fix contracts/ComplianceModule.sol
+─────────────────────────────────────────────────────────────────
+
+1. In canTransfer, the frozen check on address(0) is unreachable but
+   conceptually wrong. Change the mint-path check (from == address(0))
+   to only verify recipient identity:
+   if (from == address(0)) {
+     // minting: only check recipient
+     if (!identityRegistry.isVerified(to)) return false;
+     if (address(bondToken) != address(0) && bondToken.frozen(to)) return false;
+     return true; // skip maxHolding on mint to avoid circular supply check
+   }
+
+2. Add country blocklist:
+   mapping(bytes2 => bool) public blockedCountries;
+   function blockCountry(bytes2 countryCode, bool blocked)
+     external onlyRole(COMPLIANCE_ROLE)
+   In canTransfer, after the frozen checks:
+   bytes2 fromCountry = bytes2(bytes(identityRegistry.investorCountry(from)));
+   bytes2 toCountry   = bytes2(bytes(identityRegistry.investorCountry(to)));
+   if (blockedCountries[fromCountry] || blockedCountries[toCountry]) return false;
+   (Add investorCountry(address) view returns (string) to IIdentityRegistryForCompliance)
+
+─────────────────────────────────────────────────────────────────
+PART E — Update scripts/deploy.js
+─────────────────────────────────────────────────────────────────
+
+Update the deploy script to deploy IDRPToken instead of MockUSDC.
+After deployment:
+- Grant MINTER_ROLE on IDRP to the vault address.
+- Mint 10_000_000_000 IDRP (Rp 100,000,000.00) to deployer for testing.
+- Use the new GovBondToken constructor signature:
+  name: "Palembang Municipal Bond 2025"
+  symbol: "PMB25"
+  maturity: now + 365 days
+  couponRate: 750 (7.5%)
+  maxSupply: 100_000 bond units (ethers.parseUnits("100000", 0) = 100000n)
+  faceValueIDRP: 100_000_000n (Rp 1,000,000.00 at 2 dec = 1_000_000 * 100)
+- bondPrice in vault: 100_000_000n (same as faceValueIDRP)
+- Save deployments to both:
+    deployments/arbitrum-sepolia.json
+    frontend/deployments.json   ← new: copy for frontend auto-load
+  Include all addresses + deployer + chainId + timestamp.
+
+─────────────────────────────────────────────────────────────────
+OUTPUT REQUIREMENTS
+─────────────────────────────────────────────────────────────────
+- Write complete files: contracts/IDRPToken.sol, contracts/GovBondToken.sol,
+  contracts/GovBondVault.sol, contracts/ComplianceModule.sol, scripts/deploy.js
+- No placeholder comments like "// TODO" or "// ... rest of code"
+- All code must compile with solidity 0.8.24 and hardhat-toolbox
+- Run `npx hardhat compile` mentally — no import errors, no interface mismatches
+- After each contract, list the public functions and their signatures
+```
+
+---
+
+## PROMPT 2 — BondFactory: Multi-Bond Deployer App
+
+```
+You are working on GovBond. The existing contracts (IDRPToken, IdentityRegistry,
+ComplianceModule, GovBondToken, GovBondVault) are complete and compiling.
+Read the full codebase before writing anything.
+
+### TASK: Create BondFactory system for deploying multiple bonds
+
+─────────────────────────────────────────────────────────────────
+PART A — contracts/BondFactory.sol
+─────────────────────────────────────────────────────────────────
+Create a factory contract that deploys GovBondToken + GovBondVault pairs.
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+```
+
+State:
+  - address public immutable idrpToken
+  - address public immutable identityRegistry
+  - address public immutable complianceModule
+  - struct BondRecord {
+      address bondToken;
+      address vault;
+      string name;
+      string symbol;
+      uint256 faceValueIDRP;
+      uint256 couponRate;
+      uint256 maturityDate;
+      uint256 maxSupply;
+      uint256 deployedAt;
+      address deployer;
+    }
+  - BondRecord[] public bonds
+  - mapping(address => bool) public isBondToken   // for quick lookup
+  - mapping(address => bool) public isVault
+
+Roles: DEFAULT_ADMIN_ROLE, ISSUER_ROLE = keccak256("ISSUER_ROLE")
+Constructor: takes idrpToken, identityRegistry, complianceModule addresses.
+
+Function deployBond(
+  string calldata name,
+  string calldata symbol,
+  uint256 faceValueIDRP,   // e.g. 100_000_000 = Rp 1,000,000.00
+  uint256 couponRateBps,   // e.g. 750 = 7.5%
+  uint256 maturityMonths,  // e.g. 12 for 1 year; stored as block.timestamp + months*30 days
+  uint256 maxSupplyUnits   // whole bond units, e.g. 100000
+) external onlyRole(ISSUER_ROLE) returns (address bondToken, address vault)
+
+Inside deployBond:
+1. Deploy new GovBondToken with all params
+2. Deploy new GovBondVault(bondTokenAddr, idrpToken, faceValueIDRP)
+3. Grant AGENT_ROLE on bondToken to vault
+4. Grant AGENT_ROLE on bondToken to msg.sender (issuer)
+5. Grant MINTER_ROLE on IDRPToken to vault — CANNOT do this from factory
+   (factory doesn't hold admin on IDRP). Instead emit:
+   event BondDeployed(address indexed bondToken, address indexed vault,
+     address indexed issuer, string symbol, uint256 maturityDate);
+   and document in NatSpec that caller must call
+   idrpToken.grantRole(MINTER_ROLE, vault) after deployment.
+6. Push to bonds array, set isBondToken and isVault mappings.
+
+Additional functions:
+- getBondsCount() external view returns (uint256)
+- getAllBonds() external view returns (BondRecord[] memory)
+- getBond(uint256 index) external view returns (BondRecord memory)
+- getBondByToken(address bondToken) external view returns (BondRecord memory)
+  (linear scan is fine for governance-scale deployments)
+
+─────────────────────────────────────────────────────────────────
+PART B — scripts/deployFactory.js
+─────────────────────────────────────────────────────────────────
+New script that:
+1. Reads existing deployments/arbitrum-sepolia.json
+2. Deploys BondFactory with the existing IdentityRegistry + ComplianceModule
+   + IDRPToken addresses
+3. Grants ISSUER_ROLE to deployer on factory
+4. Updates deployments/arbitrum-sepolia.json to add:
+     "BondFactory": "<address>"
+5. Copies updated file to frontend/deployments.json
+
+─────────────────────────────────────────────────────────────────
+PART C — frontend/deploy-bond.html (standalone deployer app)
+─────────────────────────────────────────────────────────────────
+Create a separate HTML page: frontend/deploy-bond.html
+
+This is the ISSUER TOOL — used by treasury staff to deploy new bond series.
+It is a standalone page that loads BondFactory ABI from inline JS.
+
+Design direction: Indonesian government institutional — deep forest green
+(#1a3d2b) background, gold (#c9a84c) accents, Batik-inspired geometric
+border patterns as CSS background-image SVG, clean sans-serif (IBM Plex Mono
+for addresses, IBM Plex Sans for body). Official, trustworthy, not crypto-bro.
+
+MUST use ethers.js v6 from CDN:
+  https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js
+
+Load window.DEPLOYMENTS from fetch('./deployments.json') on DOMContentLoaded.
+
+Sections:
+1. HEADER: "GovBond Issuer Portal" · network badge · connect wallet button
+   Show ISSUER_ROLE status: green badge "Authorized Issuer" or red "Not Authorized"
+
+2. DEPLOY NEW BOND form (only enabled if wallet has ISSUER_ROLE):
+   - Bond Name (text, e.g. "Palembang Municipal Bond 2026")
+   - Symbol (text, max 8 chars, uppercase enforced)
+   - Face Value — Rp _______ per unit (number, default 1000000)
+   - Coupon Rate — _____ % p.a. (number, step 0.01, stored as bps × 100)
+   - Maturity — _____ months (number, default 12, min 1, max 120)
+   - Maximum Supply — _______ units (number, e.g. 100000)
+   - Preview panel showing: total bond value = faceValue × maxSupply formatted
+     as "Rp X,XXX,XXX,XXX" with Indonesian locale (id-ID)
+   - [Deploy Bond] button
+   After deploy: show transaction hash + both contract addresses + instruction
+   to call `idrpToken.grantRole(MINTER_ROLE, vaultAddress)` from admin
+
+3. DEPLOYED BONDS TABLE:
+   Calls BondFactory.getAllBonds() and renders a table:
+   | Bond Name | Symbol | Face Value | Coupon | Maturity | Max Supply | Status | Actions |
+   Status badge: "Active" (green) if maturity > now, "Matured" (amber) otherwise.
+   Actions: [View on Arbiscan] links for both token + vault addresses.
+   Auto-refresh after deploy.
+
+4. POST-DEPLOY SETUP checklist (shown after successful deploy):
+   A numbered checklist the issuer must complete:
+   ☐ 1. Grant MINTER_ROLE to vault on IDRP token (show exact calldata)
+   ☐ 2. Register investor wallets in IdentityRegistry
+   ☐ 3. Fund vault with IDRP for coupon distribution
+   ☐ 4. Share investor-facing app URL
+
+Use IBM Plex Sans + IBM Plex Mono from Google Fonts.
+Single-file HTML. No build step. No external framework.
+All JS inline. ethers.js v6 UMD from cdnjs only.
+```
+
+---
+
+## PROMPT 3 — Security Audit + Hardening
+
+```
+You are a smart contract security auditor reviewing the GovBond codebase.
+Read every .sol file in contracts/. Then apply all fixes described below.
+Do not change any function signatures visible to the frontend unless noted.
+
+─────────────────────────────────────────────────────────────────
+AUDIT FINDINGS TO FIX
+─────────────────────────────────────────────────────────────────
+
+### HIGH — Reentrancy in GovBondVault
+distributeCoupon, redeem, and deposit all make external calls (safeTransfer,
+mint, burnFrom) inside loops or without reentrancy protection.
+
+Fix: Import OpenZeppelin ReentrancyGuard. Add nonReentrant modifier to:
+  requestDeposit, deposit, requestRedeem, redeem, distributeCoupon, sweepToken.
+Pattern: follow checks-effects-interactions — update ALL state (r.claimed = true,
+hasPendingDeposit = false, etc.) BEFORE external calls.
+
+Reorder redeem() to:
+  1. Load request
+  2. Validate (all requires)
+  3. Update state: r.claimed = true, hasPendingDeposit = false
+  4. External calls: burnFrom, safeTransfer
+  5. _trackHolder
+
+### HIGH — Integer overflow risk in maxHolding check (ComplianceModule)
+Current: newBalance * 10000 > maxHoldingBps * totalSupply
+If newBalance is near type(uint256).max / 10000, this overflows.
+Fix: use mulDiv pattern or restructure:
+  newBalance > (maxHoldingBps * totalSupply) / 10000
+(totalSupply * maxHoldingBps is safe for realistic supply sizes, but document
+the assumption that totalSupply < type(uint256).max / 10000 in NatSpec)
+
+### HIGH — No access control on IDRPToken.faucet()
+If testnetFaucetEnabled is true, anyone can mint unlimited IDRP.
+Fix: Add a daily per-address cooldown:
+  mapping(address => uint256) public lastFaucetTime;
+  In faucet(): require(block.timestamp >= lastFaucetTime[to] + 24 hours, "Cooldown");
+  lastFaucetTime[to] = block.timestamp;
+
+### MEDIUM — GovBondVault.distributeCoupon rounding loss
+When (totalCouponPool * bal) / totalSupply has remainder, dust accumulates in vault.
+Fix: track totalPaid in the loop. After loop:
+  uint256 dust = totalCouponPool - totalPaid;
+  if (dust > 0) {
+    // Return dust to agent caller
+    idrp.safeTransfer(msg.sender, dust);
+    emit DustReturned(dust);
+  }
+Add event DustReturned(uint256 amount).
+
+### MEDIUM — No input validation on BondFactory.deployBond
+Add requires:
+  require(bytes(name).length > 0 && bytes(name).length <= 64, "Invalid name");
+  require(bytes(symbol).length >= 2 && bytes(symbol).length <= 8, "Invalid symbol");
+  require(faceValueIDRP >= 100, "Face value too small"); // min Rp 1.00
+  require(couponRateBps <= 5000, "Coupon > 50%");
+  require(maturityMonths >= 1 && maturityMonths <= 120, "Invalid maturity");
+  require(maxSupplyUnits >= 1 && maxSupplyUnits <= 1_000_000, "Invalid supply");
+
+### MEDIUM — GovBondToken forcedTransfer bypasses compliance
+forcedTransfer calls _transfer which goes through _update and triggers
+compliance. This is intentional but must be documented. However, it also
+checks frozen status — a forced transfer on a frozen address will revert,
+defeating the regulatory purpose.
+Fix: Add a separate internal path. Change forcedTransfer to:
+  function forcedTransfer(address from, address to, uint256 amount)
+    external onlyRole(AGENT_ROLE) returns (bool)
+  {
+    // bypass _update hooks for regulatory action
+    super._transfer(from, to, amount); // direct ERC20 transfer skipping overrides
+    emit ForcedTransfer(from, to, amount);
+    return true;
+  }
+Wait — _transfer in ERC20 calls _update internally. Instead:
+  Use a flag: bool private _forcedTransferActive;
+  In _update: if (_forcedTransferActive) { super._update(from, to, amount); return; }
+  In forcedTransfer: _forcedTransferActive = true; _transfer(from, to, amount); _forcedTransferActive = false;
+  Use a try/finally equivalent:
+    _forcedTransferActive = true;
+    _transfer(from, to, amount);
+    _forcedTransferActive = false;
+  (Solidity has no finally — document that if _transfer reverts, flag stays true.
+  Mitigate: only AGENT_ROLE can call this. Add a resetForcedFlag() admin function
+  as emergency reset.)
+
+### LOW — Missing events
+Add events where missing:
+  - IdentityRegistry: emit events already present — confirm batchRegister emits InvestorRegistered for each
+  - GovBondVault.setBondPrice: emit BondPriceUpdated(oldPrice, newPrice)
+  - ComplianceModule.blockCountry: emit CountryBlocked(bytes2 country, bool blocked)
+  - BondFactory: already has BondDeployed — add ISSUER_ROLE granted event via OZ AccessControl (automatic)
+
+### LOW — IDRP decimals compatibility
+IDRP uses 2 decimals. Add a comment in GovBondVault explaining the decimal
+math to future auditors:
+  // IDRP: 2 decimals. 1 bond unit = faceValueIDRP IDRP base units.
+  // Example: faceValue=100_000_000 means Rp 1,000,000.00
+  // deposit(100_000_000, ...) → 1 bond unit minted (0-decimal)
+  // redeem(1, ...) → 100_000_000 IDRP base units returned
+
+─────────────────────────────────────────────────────────────────
+ADDITIONAL HARDENING
+─────────────────────────────────────────────────────────────────
+
+1. Add NatSpec (@notice, @param, @return) to all public/external functions
+   in all contracts.
+
+2. Add custom errors instead of require strings where gas matters:
+   In GovBondVault, replace all require(condition, "string") with
+   custom errors: error ZeroAssets(); error PendingDepositExists(); etc.
+   Keep string-based requires only in GovBondToken for ERC-3643 compliance
+   readability.
+
+3. In IdentityRegistry.batchRegister, add:
+   require(investors.length <= 200, "Batch too large"); // prevent gas limit DoS
+
+4. In ComplianceModule, add:
+   require(address(identityRegistry) != address(0), "Registry not set");
+   in the constructor.
+
+─────────────────────────────────────────────────────────────────
+OUTPUT REQUIREMENTS
+─────────────────────────────────────────────────────────────────
+Write complete final versions of ALL modified contracts:
+  contracts/IDRPToken.sol
+  contracts/GovBondToken.sol
+  contracts/GovBondVault.sol
+  contracts/ComplianceModule.sol
+  contracts/IdentityRegistry.sol
+  contracts/BondFactory.sol
+
+After writing, produce a SECURITY_AUDIT.md file summarizing:
+- All findings (HIGH/MEDIUM/LOW/INFO)
+- Status (Fixed / Won't Fix + reason)
+- Residual risks
+- Recommended post-deployment monitoring
+```
+
+---
+
+## PROMPT 4 — Admin Dashboard
+
+```
+You are working on GovBond. All contracts are finalized.
+Read contracts/, frontend/deploy-bond.html, and the existing
+frontend/index.html before writing anything.
+
+### TASK: Build frontend/admin.html — Admin Dashboard
+
+─────────────────────────────────────────────────────────────────
+DESIGN DIRECTION
+─────────────────────────────────────────────────────────────────
+Aesthetic: Indonesian government data portal — not crypto, not web3 startup.
+Think Bappeda internal system: structured, dense, official.
+Background: off-white (#f5f0e8), dark teal sidebar (#0d3349), gold accents (#c9a84c).
+Font: "Plus Jakarta Sans" (body) + "IBM Plex Mono" (addresses, numbers).
+Layout: fixed left sidebar (nav + wallet status) + main content area.
+Tables are the primary UI element — data-dense, not card-heavy.
+No animations. No gradients. Functional utility over aesthetics.
+
+─────────────────────────────────────────────────────────────────
+REQUIREMENTS
+─────────────────────────────────────────────────────────────────
+
+Load window.DEPLOYMENTS from fetch('./deployments.json').
+Use ethers.js v6 from cdnjs.
+Single-file HTML. All JS + CSS inline.
+
+Required ABIs (inline in script):
+  BondFactory: getAllBonds(), getBondsCount(), deployBond(...)
+  GovBondToken: name(), symbol(), totalSupply(), maxSupply(), maturityDate(),
+    couponRate(), faceValueIDRP(), frozen(address), redeemable()
+  GovBondVault: getHolders(), depositRequests(uint256), investorDepositRequestId(address),
+    hasPendingDeposit(address), hasPendingRedeem(address), couponsReceived(address),
+    fulfillDeposits(address[]), fulfillRedemptions(address[]),
+    distributeCoupon(uint256), bondPrice()
+  IdentityRegistry: isVerified(address), investorCountry(address), verifiedAt(address),
+    registerInvestor(address, string), batchRegister(address[], string[])
+  IDRPToken: balanceOf(address), approve(address, uint256), faucet(address),
+    mint(address, uint256), grantRole(bytes32, address)
+  ComplianceModule: blockCountry(bytes2, bool), blockedCountries(bytes2),
+    maxHoldingBps(), setMaxHoldingBps(uint256), canTransfer(address, address, uint256)
+
+─────────────────────────────────────────────────────────────────
+SIDEBAR NAVIGATION (left panel, always visible after connect)
+─────────────────────────────────────────────────────────────────
+- GovBond logo + "Admin" label
+- Wallet connect button (top of sidebar)
+- After connect: show truncated address + role badges:
+  ADMIN (if DEFAULT_ADMIN_ROLE on BondFactory or IDRPToken)
+  ISSUER (if ISSUER_ROLE on BondFactory)
+  AGENT (if AGENT_ROLE on any deployed bond's IdentityRegistry)
+- Nav links: Overview · All Bonds · Bond Holders · KYC Registry ·
+  Compliance · Coupon Distribution · IDRP Token · Settings
+
+─────────────────────────────────────────────────────────────────
+SECTION 1: OVERVIEW
+─────────────────────────────────────────────────────────────────
+Stats row (4 cards):
+  - Total Bonds Deployed (from BondFactory.getBondsCount())
+  - Total Bond Units Outstanding (sum totalSupply across all bonds)
+  - Total IDRP in Circulation (formatted as Rupiah)
+  - Registered Investors (from IdentityRegistry — count verified addresses
+    by watching InvestorRegistered events on page load, cache in memory)
+
+Recent activity table: last 10 BondDeployed + InvestorRegistered + CouponDistributed
+events (query via provider.getLogs with fromBlock = deployBlock or last 10000 blocks).
+
+─────────────────────────────────────────────────────────────────
+SECTION 2: ALL BONDS
+─────────────────────────────────────────────────────────────────
+Table: Bond Name | Symbol | Face Value | Coupon Rate | Maturity | Max Supply |
+       Outstanding | % Filled | Status | Bond Contract | Vault Contract
+
+% Filled = totalSupply / maxSupply × 100, shown as a mini progress bar.
+Status: Active / Matured / Paused (check token.paused())
+Clicking a row selects that bond for the Bond Holders section.
+
+─────────────────────────────────────────────────────────────────
+SECTION 3: BOND HOLDERS
+─────────────────────────────────────────────────────────────────
+Bond selector dropdown (populated from BondFactory.getAllBonds()).
+After selecting a bond, call vault.getHolders() to get all holder addresses.
+
+For each holder, fetch in parallel:
+  bondToken.balanceOf(address)
+  bondToken.frozen(address)
+  registry.isVerified(address)
+  registry.investorCountry(address)
+  vault.couponsReceived(address)
+  vault.hasPendingDeposit(address)
+  vault.hasPendingRedeem(address)
+
+Render table:
+  Wallet | KYC | Country | Holdings | Pending Deposit | Pending Redeem |
+  Coupons Received | Frozen | Actions
+
+Actions per row:
+  [Freeze / Unfreeze] toggle — calls bondToken.freeze(address, !currentStatus)
+  [Force Transfer] — opens modal with "From / To / Amount" inputs
+
+Bulk actions (checkboxes + toolbar):
+  [Fulfill Deposits] — selected wallets passed to vault.fulfillDeposits([...])
+  [Fulfill Redemptions] — same pattern for vault.fulfillRedemptions([...])
+
+─────────────────────────────────────────────────────────────────
+SECTION 4: KYC REGISTRY
+─────────────────────────────────────────────────────────────────
+Two sub-tabs: "Register Investor" and "Batch Register".
+
+Register Investor:
+  - Wallet address input + ISO-2 country code dropdown
+    (pre-populate: ID, SG, MY, US, GB, JP, AE, HK — plus free text)
+  - [Register] button → registry.registerInvestor(address, country)
+
+Batch Register:
+  - Textarea: one "address,country" per line OR CSV upload
+  - Parse on client, validate all addresses with ethers.isAddress()
+  - Show preview table before submitting
+  - [Submit Batch] → registry.batchRegister(addrs[], countries[])
+    Split into chunks of 100 if > 100 entries (per the 200-limit in contract)
+  - Progress indicator during chunked batch
+
+─────────────────────────────────────────────────────────────────
+SECTION 5: COMPLIANCE
+─────────────────────────────────────────────────────────────────
+Panel A — Max Holding Cap:
+  Current: compliance.maxHoldingBps() shown as X% of supply
+  Input + [Update] → compliance.setMaxHoldingBps(bps)
+
+Panel B — Country Blocklist:
+  Table of ISO-2 codes with blocked status (read blockedCountries for known list).
+  [Block] / [Unblock] per country.
+  Preset list: check the 30 most common country codes.
+
+Panel C — Transfer Check Tool:
+  From / To / Amount inputs → calls compliance.canTransfer() as a read
+  → shows green "Transfer Allowed" or red "Transfer Blocked" with reason
+  (deduce reason by checking individual conditions: verified? frozen? cap?)
+
+─────────────────────────────────────────────────────────────────
+SECTION 6: COUPON DISTRIBUTION
+─────────────────────────────────────────────────────────────────
+Bond selector (same dropdown as Section 3).
+After bond selected:
+  - Show: coupon rate, total outstanding, next coupon amount at full rate
+    (calculate: (totalSupply × faceValueIDRP × couponRate) / 10000 / 12 for monthly)
+  - IDRP balance of connected wallet
+  - Input: Total IDRP to distribute (pre-filled with calculated monthly coupon)
+  - Holder preview table: shows each holder and their estimated payout
+    (computed locally: (input × holderBalance) / totalSupply)
+  - [Approve IDRP] button → idrp.approve(vaultAddr, amount)
+  - [Distribute Coupon] button → vault.distributeCoupon(amount)
+  - Show dust returned (watch for DustReturned event in tx receipt logs)
+
+─────────────────────────────────────────────────────────────────
+SECTION 7: IDRP TOKEN
+─────────────────────────────────────────────────────────────────
+  - Total supply, your balance, faucet status (testnetFaucetEnabled)
+  - [Mint IDRP] form: address + amount → idrp.mint(to, amount) [MINTER_ROLE]
+  - [Grant MINTER_ROLE] form: enter vault address → idrp.grantRole(MINTER_ROLE, addr)
+    (needed after each new bond deploy from factory)
+  - [Disable Faucet] button if faucet is enabled
+
+─────────────────────────────────────────────────────────────────
+SECTION 8: SETTINGS
+─────────────────────────────────────────────────────────────────
+  - Show all contract addresses with Arbiscan links (from deployments.json)
+  - Bond price per bond (vault.bondPrice()) with [Update] input
+  - Network info: chainId, RPC URL, connected wallet
+
+─────────────────────────────────────────────────────────────────
+GLOBAL UX REQUIREMENTS
+─────────────────────────────────────────────────────────────────
+- Every write transaction: show "Pending…" state, then tx hash link, then
+  "Confirmed in block X" after receipt.
+- Every read that might take >500ms: show a loading skeleton row.
+- All IDRP amounts: format with Indonesian locale (id-ID), "Rp X.XXX.XXX,XX"
+- All addresses: truncated display (0x1234...5678) with copy-to-clipboard button.
+- Toast notifications (top-right, auto-dismiss 5s) for all tx results.
+- Wallet disconnect / account change → reload page.
+- If wallet does not have ADMIN or AGENT role: show read-only view with
+  banner "Connect an authorized wallet to perform actions."
+
+Single file. All code inline. ethers.js v6 CDN only. No build step.
+```
+
+---
+
+## PROMPT 5 — Updated Test Suite
+
+```
+You are working on GovBond. All contracts are finalized after the security audit.
+Read every .sol file in contracts/ before writing the tests.
+
+### TASK: Rewrite test/GovBond.test.js with comprehensive coverage
+
+Requirements:
+- Use Hardhat + Chai + ethers.js v6 (as provided by hardhat-toolbox)
+- Use loadFixture from @nomicfoundation/hardhat-toolbox/network-helpers
+- Achieve >90% line coverage on all contracts
+- Tests must be runnable with: npx hardhat test
+
+Test structure (describe blocks):
+
+1. IDRPToken
+   - Deployment: correct name/symbol/decimals
+   - Minting: only MINTER_ROLE can mint; others revert with AccessControl error
+   - Burning: holder can burn own tokens; burnFrom uses allowance
+   - Faucet: works when enabled; respects 24hr cooldown; admin can disable
+   - Pause: paused token blocks transfers; admin can unpause
+
+2. IdentityRegistry
+   - registerInvestor: sets verified + country + verifiedAt
+   - removeInvestor: clears verified flag
+   - batchRegister: registers multiple; reverts if length mismatch; reverts if > 200
+   - Access control: non-AGENT_ROLE reverts
+
+3. ComplianceModule
+   - canTransfer: returns true for two verified, unfrozen addresses
+   - returns false if sender not verified
+   - returns false if recipient not verified
+   - returns false if sender frozen
+   - returns false if recipient frozen
+   - maxHoldingBps: returns false if recipient would exceed cap
+   - Country blocklist: returns false if country blocked for from or to
+   - Mint path (from == address(0)): only checks recipient
+
+4. GovBondToken
+   - Deployment: correct name/symbol/decimals(0)/faceValueIDRP/couponRate/maturityDate
+   - mint: AGENT_ROLE only; reverts for unverified; respects maxSupply cap
+   - freeze: AGENT_ROLE only; frozen sender/receiver reverts transfer
+   - forcedTransfer: bypasses compliance; works on frozen address
+   - pause/unpause: admin only; paused blocks _update
+   - redeemable(): returns false before maturity, true after
+   - decimals() returns 0
+   - _update: compliance check fires on transfer; skips on mint/burn
+
+5. GovBondVault
+   - requestDeposit: locks IDRP; creates request; blocks double-pending
+   - fulfillDeposits: marks claimable; AGENT_ROLE only
+   - deposit: mints bond units; correct share math; clears pending flag
+     - exact integer: 1 IDRP face value → 1 bond unit
+     - fractional reject: non-multiple of bondPrice reverts
+     - cap check: reverts when totalSupply + shares > maxSupply
+   - requestRedeem: reverts before maturity; locks bond tokens
+   - fulfillRedemptions: marks claimable; AGENT_ROLE only
+   - redeem: burns bond tokens; returns IDRP; correct asset math
+   - distributeCoupon: pro-rata payout; dust returned to caller
+     - 3 holders, verify each receives correct share
+     - single holder receives 100%
+   - getHolders: reflects mints and burns accurately
+   - Reentrancy: deploy a mock attacker contract; verify nonReentrant blocks reentry
+     on deposit() and redeem()
+   - resetDepositRequest / resetRedeemRequest: admin only; unblocks investor
+   - sweepToken: admin only; transfers specified token out
+
+6. BondFactory
+   - deployBond: creates GovBondToken + GovBondVault with correct params
+   - deployBond: reverts on invalid inputs (name too long, coupon > 50%, etc.)
+   - getAllBonds: returns correct records
+   - getBondByToken: returns correct record
+   - ISSUER_ROLE: non-issuer reverts
+   - BondDeployed event emitted with correct args
+
+7. Integration: Full bond lifecycle
+   - Deploy full stack via fixture
+   - Register 3 investors
+   - All 3 subscribe → fulfillDeposits → deposit
+   - Treasury distributes coupon → verify each holder receives correct IDRP
+   - Warp time past maturity (use time.increase from hardhat-network-helpers)
+   - All 3 request redeem → fulfillRedemptions → redeem
+   - Verify totalSupply = 0 after all redemptions
+   - Verify ComplianceModule blocks transfer to unverified wallet
+
+For the reentrancy test, create a helper contract inline in the test file
+using a Hardhat-compiled inline contract pattern or a separate
+contracts/test/MockAttacker.sol file.
+
+Output files:
+  test/GovBond.test.js   (main test file)
+  contracts/test/MockAttacker.sol   (reentrancy attacker helper)
+```
+
+---
+
+## PROMPT 6 — README + GitHub Prep
+
+```
+You are working on GovBond. All code is complete.
+Read: govbond-docs.md, all contracts/, SECURITY_AUDIT.md, all frontend/*.html,
+hardhat.config.js, package.json.
+
+### TASK: Write README.md + prepare repository for GitHub
+
+─────────────────────────────────────────────────────────────────
+PART A — README.md
+─────────────────────────────────────────────────────────────────
+Write a comprehensive README.md. Use the following structure exactly:
+
+```markdown
+# GovBond — Municipal Bond Tokenization Protocol
+
+> Privacy-preserving municipal bond issuance and settlement on Arbitrum Sepolia.
+> Built for Indonesian regional governments (Pemerintah Daerah).
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Solidity](https://img.shields.io/badge/Solidity-0.8.24-blue.svg)](https://soliditylang.org)
+[![Network](https://img.shields.io/badge/Network-Arbitrum%20Sepolia-orange.svg)](https://sepolia.arbiscan.io)
+[![Hardhat](https://img.shields.io/badge/Built%20with-Hardhat-yellow.svg)](https://hardhat.org)
+
+## Overview
+[2-paragraph summary: what it is, why it matters for Indonesian obligasi daerah]
+
+## Architecture
+[The ASCII architecture diagram from original docs, updated with BondFactory and IDRPToken]
+
+## Contracts
+| Contract | Description | Audited |
+|----------|-------------|---------|
+[table of all 6 contracts with one-line descriptions]
+
+## Token Standards
+[Brief explanation of ERC-3643, ERC-7540, and the privacy model]
+
+## Bond Parameters
+[The parameters table from original docs, updated for IDRP]
+
+## Quick Start
+
+### Prerequisites
+[Node 18+, MetaMask, testnet ETH]
+
+### Installation
+[git clone, npm install, cp .env.example .env, compile, test]
+
+### Deploy
+[npx hardhat run scripts/deploy.js --network arbitrumSepolia]
+[npx hardhat run scripts/deployFactory.js --network arbitrumSepolia]
+
+### Frontend Setup
+[How to patch frontend/deployments.json + open frontend pages]
+
+## Frontend Apps
+| App | File | Purpose |
+|-----|------|---------|
+| Investor Portal | frontend/index.html | Subscribe, view holdings, redeem |
+| Issuer Portal | frontend/deploy-bond.html | Deploy new bond series |
+| Admin Dashboard | frontend/admin.html | Manage investors, KYC, coupons |
+
+## User Flows
+[Subscription flow, coupon flow, redemption flow — from original docs, updated]
+
+## Security
+[Link to SECURITY_AUDIT.md. Summarize: ReentrancyGuard, access control,
+no public mint, maturity enforcement, onchain holder set, custom errors]
+
+## IDRP Token
+[Explanation of IDRPToken: 2 decimals, MINTER_ROLE gated, testnet faucet]
+
+## Environment Variables
+[Table: PRIVATE_KEY, ARBISCAN_API_KEY — descriptions]
+
+## Contract Addresses
+[Placeholder table pointing to deployments/arbitrum-sepolia.json]
+
+## Development
+[npx hardhat test, npx hardhat coverage, npx hardhat node]
+
+## License
+MIT
+```
+
+─────────────────────────────────────────────────────────────────
+PART B — .gitignore
+─────────────────────────────────────────────────────────────────
+Create .gitignore that excludes:
+  node_modules/, .env, deployments/*.json (addresses are deployment-specific),
+  frontend/deployments.json, cache/, artifacts/, coverage/, coverage.json,
+  typechain-types/, .DS_Store
+
+DO include: deployments/.gitkeep (so the folder exists), .env.example
+
+─────────────────────────────────────────────────────────────────
+PART C — package.json scripts
+─────────────────────────────────────────────────────────────────
+Add/update these scripts in package.json:
+  "compile": "hardhat compile",
+  "test": "hardhat test",
+  "coverage": "hardhat coverage",
+  "deploy": "hardhat run scripts/deploy.js --network arbitrumSepolia",
+  "deploy:factory": "hardhat run scripts/deployFactory.js --network arbitrumSepolia",
+  "deploy:local": "hardhat run scripts/deploy.js --network localhost",
+  "node": "hardhat node",
+  "verify": "hardhat verify --network arbitrumSepolia"
+
+─────────────────────────────────────────────────────────────────
+PART D — GitHub push instructions (as a shell script)
+─────────────────────────────────────────────────────────────────
+Create scripts/push-to-github.sh:
+
+#!/bin/bash
+# GovBond — push to GitHub
+# Usage: bash scripts/push-to-github.sh https://github.com/YOUR_USERNAME/GovBond.git
+
+REPO_URL=${1:-"https://github.com/xvader/GovBond.git"}
+
+echo "🏛️  GovBond — Preparing GitHub push"
+echo ""
+
+# Ensure we're not committing secrets
+if grep -r "PRIVATE_KEY=" .env 2>/dev/null | grep -v "your_private_key_here"; then
+  echo "❌ .env contains a real PRIVATE_KEY. Aborting."
+  exit 1
+fi
+
+# Ensure deployments are excluded
+if [ -f "deployments/arbitrum-sepolia.json" ]; then
+  echo "⚠️  deployments/arbitrum-sepolia.json exists — it is in .gitignore and will NOT be pushed."
+fi
+
+git add -A
+git status
+
+echo ""
+echo "Ready to commit. Enter commit message (or press Enter for default):"
+read -r MSG
+MSG=${MSG:-"feat: GovBond v2 — IDRP, BondFactory, admin dashboard, security audit"}
+
+git commit -m "$MSG"
+git remote set-url origin "$REPO_URL" 2>/dev/null || git remote add origin "$REPO_URL"
+git push -u origin main
+
+echo ""
+echo "✅ Pushed to $REPO_URL"
+echo ""
+echo "Next steps:"
+echo "  1. Enable GitHub Pages on /frontend folder (for static demo)"
+echo "  2. Add contract addresses to README after deployment"
+echo "  3. Tag release: git tag v2.0.0 && git push --tags"
+
+─────────────────────────────────────────────────────────────────
+PART E — LICENSE
+─────────────────────────────────────────────────────────────────
+Create LICENSE file with standard MIT license text.
+Copyright: 2025 Bappeda Kota Palembang / xvader
+```
+
+---
+
+## Run Order & Checklist
+
+```
+[ ] git checkout -b feat/govbond-v2
+
+[ ] PROMPT 1 — Run in kiro-cli. Review diffs. Run: npx hardhat compile
+[ ] PROMPT 2 — Run in kiro-cli. Review diffs. Run: npx hardhat compile
+[ ] PROMPT 3 — Run in kiro-cli. Review SECURITY_AUDIT.md. Run: npx hardhat compile
+[ ] PROMPT 4 — Run in kiro-cli. Open frontend/admin.html in browser (no server needed).
+[ ] PROMPT 5 — Run in kiro-cli. Run: npx hardhat test
+[ ] PROMPT 6 — Run in kiro-cli. Review README.md. Run: bash scripts/push-to-github.sh
+
+After all prompts pass:
+[ ] npx hardhat run scripts/deploy.js --network arbitrumSepolia
+[ ] npx hardhat run scripts/deployFactory.js --network arbitrumSepolia
+[ ] Copy deployed addresses into README.md Contract Addresses table
+[ ] git tag v2.0.0 && git push --tags
+```
+
+---
+
+## Key Design Decisions (for your reference)
+
+**IDRP decimals = 2** (sen), so Rp 1,000,000 = `100_000_000` base units.
+**Bond token decimals = 0** (whole units only — no fractional bonds).
+**bondPrice** = faceValueIDRP in IDRP base units.
+**share math**: `shares = assets / bondPrice` (integer division; revert if remainder).
+
+**EnumerableSet** replaces the external holder array in `distributeCoupon`.
+The factory **cannot** grant MINTER_ROLE on IDRPToken automatically — the IDRP admin must do this manually after each bond deploy. The Issuer Portal shows a checklist for this.
+
+**Three frontend files, three audiences**:
+- `index.html` → investors (subscribe, hold, redeem)
+- `deploy-bond.html` → treasury/issuer (deploy new bonds)
+- `admin.html` → operations team (KYC, fulfillment, coupons, compliance)
