@@ -259,11 +259,12 @@ async function connectWallet() {
     }
     signer = await provider.getSigner();
     userAddress = await signer.getAddress();
+    await loadDeployments();
     initContracts();
     document.getElementById("connectBtn").textContent = userAddress.slice(0,6) + "..." + userAddress.slice(-4);
     document.getElementById("notConnected").style.display = "none";
     document.getElementById("dashboardContent").style.display = "block";
-    if (userAddress.toLowerCase() === window.DEPLOYMENTS.deployer.toLowerCase()) {
+    if (window.DEPLOYMENTS.deployer && userAddress.toLowerCase() === window.DEPLOYMENTS.deployer.toLowerCase()) {
       document.getElementById("adminTabBtn").style.display = "block";
     }
     await refreshDashboard();
@@ -424,6 +425,7 @@ async function distributeCoupon() {
 
 async function mintTestIDRP() {
   if (!userAddress) return showStatus("adminStatus", "Connect wallet first.", "error");
+  if (!usdcContract) return showStatus("adminStatus", "IDRP contract not loaded.", "error");
   try {
     const tx = await usdcContract.mint(userAddress, ethers.parseUnits("10000", 2));
     const receipt = await tx.wait();
