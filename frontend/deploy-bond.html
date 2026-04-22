@@ -356,13 +356,14 @@ const BOND_TOKEN_ABI = [
 const ISSUER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("ISSUER_ROLE"));
 const MINTER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("MINTER_ROLE"));
 
+const INLINE_DEPLOYMENTS = {"network":"arbitrumSepolia","chainId":421614,"deployer":"0x66d769C8bbc0e164a934EA42e29718F20b252996","IDRPToken":"0x0c01a476DF8Ba08a64A400540F9B82891e584611","IdentityRegistry":"0x4c4bedB3dc4EABe9AF84a5832A65d181609538e1","ComplianceModule":"0xD98B252658FFfB004AEdbefE38d8E008bE55D47d","GovBondToken":"0xE11e8a412eC52148eA1dB0C81b463CF116e0985f","GovBondVault":"0x593EB05848922C03f5bE6dd46941D28C06b44737","maturityDate":1808366063,"BondFactory":"0xB65E56110043cEA4CD865F929773Fe5a21ed35Fd"};
+
 async function init() {
   try {
     const res = await fetch('./deployments.json');
-    DEPLOYMENTS = await res.json();
-  } catch(e) {
-    console.warn("deployments.json not found");
-  }
+    if (res.ok) DEPLOYMENTS = await res.json();
+  } catch(e) {}
+  if (!DEPLOYMENTS?.BondFactory) DEPLOYMENTS = INLINE_DEPLOYMENTS;
   setupPreview();
 }
 

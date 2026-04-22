@@ -89,7 +89,7 @@ header h1 span{color:#4f8ef7}
       <div id="dashboardContent" style="display:none">
         <div class="info-row"><span class="label">Wallet</span><span class="value" id="walletAddr">—</span></div>
         <div class="info-row"><span class="label">KYC Status</span><span class="value" id="kycStatus">—</span></div>
-        <div class="info-row"><span class="label">USDC Balance</span><span class="value" id="usdcBalance">—</span></div>
+        <div class="info-row"><span class="label">IDRP Balance</span><span class="value" id="usdcBalance">—</span></div>
         <div class="info-row">
           <span class="label">PMB25 Holdings</span>
           <span class="value">
@@ -116,7 +116,7 @@ header h1 span{color:#4f8ef7}
 
       <div id="tab-subscribe" class="tab-panel active">
         <div class="form-group">
-          <label>Amount (USDC)</label>
+          <label>Amount (IDRP)</label>
           <input type="number" id="depositAmount" placeholder="e.g. 1000" min="1"/>
         </div>
         <button class="btn btn-primary" onclick="requestDeposit()">Request Subscription</button>
@@ -146,13 +146,13 @@ header h1 span{color:#4f8ef7}
         </div>
         <div class="admin-section">
           <h3>Distribute Coupon</h3>
-          <div class="form-group"><input type="number" id="couponAmount" placeholder="Total USDC coupon pool"/></div>
+          <div class="form-group"><input type="number" id="couponAmount" placeholder="Total IDRP coupon pool"/></div>
           <div class="form-group"><input type="text" id="couponHolders" placeholder="Comma-separated holder addresses"/></div>
           <button class="btn btn-secondary" onclick="distributeCoupon()">Distribute Coupon</button>
         </div>
         <div class="admin-section">
-          <h3>Mint Test USDC</h3>
-          <button class="btn btn-secondary" onclick="mintTestUSDC()">Mint 10,000 USDC to My Wallet</button>
+          <h3>Mint Test IDRP</h3>
+          <button class="btn btn-secondary" onclick="mintTestIDRP()">Mint 10,000 IDRP to My Wallet</button>
         </div>
         <div id="adminStatus" class="status"></div>
       </div>
@@ -164,14 +164,14 @@ header h1 span{color:#4f8ef7}
 // ── Deployments — loaded from deployments.json at runtime ────────────────────
 window.DEPLOYMENTS = {};
 
+const INLINE_DEPLOYMENTS = {"network":"arbitrumSepolia","chainId":421614,"deployer":"0x66d769C8bbc0e164a934EA42e29718F20b252996","IDRPToken":"0x0c01a476DF8Ba08a64A400540F9B82891e584611","IdentityRegistry":"0x4c4bedB3dc4EABe9AF84a5832A65d181609538e1","ComplianceModule":"0xD98B252658FFfB004AEdbefE38d8E008bE55D47d","GovBondToken":"0xE11e8a412eC52148eA1dB0C81b463CF116e0985f","GovBondVault":"0x593EB05848922C03f5bE6dd46941D28C06b44737","maturityDate":1808366063,"BondFactory":"0xB65E56110043cEA4CD865F929773Fe5a21ed35Fd"};
+
 async function loadDeployments() {
   try {
     const resp = await fetch('./deployments.json');
-    if (!resp.ok) throw new Error("Not found");
-    window.DEPLOYMENTS = await resp.json();
-  } catch {
-    window.DEPLOYMENTS = {};
-  }
+    if (resp.ok) window.DEPLOYMENTS = await resp.json();
+  } catch {}
+  if (!window.DEPLOYMENTS?.GovBondVault) window.DEPLOYMENTS = INLINE_DEPLOYMENTS;
   if (!window.DEPLOYMENTS.GovBondVault) {
     document.getElementById("configBanner").style.display = "block";
     document.querySelectorAll(".btn").forEach(b => b.disabled = true);
@@ -188,7 +188,7 @@ const ERC20_ABI = [
   "function totalSupply() view returns (uint256)"
 ];
 
-const MOCK_USDC_ABI = [...ERC20_ABI,
+const IDRP_ABI = [...ERC20_ABI,
   "function mint(address to, uint256 amount)"
 ];
 
@@ -277,7 +277,7 @@ async function connectWallet() {
 function initContracts() {
   const d = window.DEPLOYMENTS;
   if (d.GovBondToken) bondContract = new ethers.Contract(d.GovBondToken, BOND_ABI, signer);
-  if (d.MockUSDC) usdcContract = new ethers.Contract(d.MockUSDC, MOCK_USDC_ABI, signer);
+  if (d.IDRPToken) usdcContract = new ethers.Contract(d.IDRPToken, IDRP_ABI, signer);
   if (d.IdentityRegistry) registryContract = new ethers.Contract(d.IdentityRegistry, REGISTRY_ABI, signer);
   if (d.GovBondVault) vaultContract = new ethers.Contract(d.GovBondVault, VAULT_ABI, signer);
 }
@@ -317,10 +317,10 @@ async function refreshDashboard() {
     document.getElementById("kycStatus").innerHTML = verified
       ? '<span class="badge badge-green">Verified ✓</span>'
       : '<span class="badge badge-red">Not Verified ✗</span>';
-    document.getElementById("usdcBalance").textContent = fmt6(usdcBal) + " USDC";
+    document.getElementById("usdcBalance").textContent = fmt2(usdcBal) + " IDRP";
     cachedBondBalance = fmt18(bondBal) + " PMB25";
     document.getElementById("bondBalance").textContent = balanceHidden ? "••••••" : cachedBondBalance;
-    document.getElementById("couponsReceived").textContent = fmt6(coupons) + " USDC";
+    document.getElementById("couponsReceived").textContent = fmt2(coupons) + " IDRP";
 
     if (hasPending && vaultContract) {
       const reqId = await vaultContract.investorDepositRequestId(userAddress);
@@ -328,8 +328,8 @@ async function refreshDashboard() {
         vaultContract.pendingDepositRequest(reqId, userAddress),
         vaultContract.claimableDepositRequest(reqId, userAddress)
       ]);
-      document.getElementById("pendingDeposit").textContent = pending > 0n ? fmt6(pending) + " USDC" : "—";
-      document.getElementById("claimableBonds").textContent = claimable > 0n ? fmt6(claimable) + " USDC (ready to claim)" : "—";
+      document.getElementById("pendingDeposit").textContent = pending > 0n ? fmt2(pending) + " IDRP" : "—";
+      document.getElementById("claimableBonds").textContent = claimable > 0n ? fmt2(claimable) + " IDRP (ready to claim)" : "—";
     } else {
       document.getElementById("pendingDeposit").textContent = "—";
       document.getElementById("claimableBonds").textContent = "—";
@@ -346,9 +346,9 @@ function toggleBalance() {
 async function requestDeposit() {
   const raw = document.getElementById("depositAmount").value;
   if (!raw || Number(raw) <= 0) return showStatus("subscribeStatus", "Enter a valid amount.", "error");
-  const amount = ethers.parseUnits(raw, 6);
+  const amount = ethers.parseUnits(raw, 2);
   try {
-    showStatus("subscribeStatus", "Approving USDC...", "info");
+    showStatus("subscribeStatus", "Approving IDRP...", "info");
     const approveTx = await usdcContract.approve(window.DEPLOYMENTS.GovBondVault, amount);
     await approveTx.wait();
     showStatus("subscribeStatus", "Submitting deposit request...", "info");
@@ -411,9 +411,9 @@ async function distributeCoupon() {
   const holdersRaw = document.getElementById("couponHolders").value;
   const holders = holdersRaw.split(",").map(a => a.trim()).filter(a => ethers.isAddress(a));
   if (!raw || Number(raw) <= 0 || !holders.length) return showStatus("adminStatus", "Enter coupon amount and holders.", "error");
-  const amount = ethers.parseUnits(raw, 6);
+  const amount = ethers.parseUnits(raw, 2);
   try {
-    showStatus("adminStatus", "Approving USDC for coupon...", "info");
+    showStatus("adminStatus", "Approving IDRP for coupon...", "info");
     const approveTx = await usdcContract.approve(window.DEPLOYMENTS.GovBondVault, amount);
     await approveTx.wait();
     const tx = await vaultContract.distributeCoupon(amount, holders);
@@ -422,19 +422,19 @@ async function distributeCoupon() {
   } catch(e) { showStatus("adminStatus", "Error: " + (e.reason || e.message), "error"); }
 }
 
-async function mintTestUSDC() {
+async function mintTestIDRP() {
   if (!userAddress) return showStatus("adminStatus", "Connect wallet first.", "error");
   try {
-    const tx = await usdcContract.mint(userAddress, ethers.parseUnits("10000", 6));
+    const tx = await usdcContract.mint(userAddress, ethers.parseUnits("10000", 2));
     const receipt = await tx.wait();
-    showStatus("adminStatus", `Minted 10,000 USDC! <a href="${ARBISCAN}/tx/${receipt.hash}" target="_blank">View TX ↗</a>`, "success");
+    showStatus("adminStatus", `Minted 10,000 IDRP! <a href="${ARBISCAN}/tx/${receipt.hash}" target="_blank">View TX ↗</a>`, "success");
     await refreshDashboard();
   } catch(e) { showStatus("adminStatus", "Error: " + (e.reason || e.message), "error"); }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmt18(val) { return parseFloat(ethers.formatEther(val)).toLocaleString("en-US", {maximumFractionDigits:4}); }
-function fmt6(val) { return parseFloat(ethers.formatUnits(val, 6)).toLocaleString("en-US", {maximumFractionDigits:2}); }
+function fmt2(val) { return parseFloat(ethers.formatUnits(val, 2)).toLocaleString("en-US", {maximumFractionDigits:2}); }
 
 function showStatus(id, msg, type) {
   const el = document.getElementById(id);
